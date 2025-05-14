@@ -1,0 +1,24 @@
+# Mindora Workspace Ignore
+node_modules/
+dist/
+dist-electron/
+dist-ssr/
+build/
+.cache/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+
+# Upstream reference repos (kept local for research, not committed to deployable Mindora)
+research/upstream/
+research/temp/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.bak
+
