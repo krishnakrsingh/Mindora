@@ -9,8 +9,15 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
-    port: 3000,
+    port: 3001,
     host: true,
+    watch: {
+      ignored: ['**/research/**', '**/node_modules/**', '**/.git/**'],
+    },
+  },
+  optimizeDeps: {
+    entries: ['index.html', 'src/**/*.{ts,tsx}'],
+    exclude: ['research'],
   },
 });
 
