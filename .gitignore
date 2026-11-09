@@ -21,4 +21,5 @@ research/temp/
 .DS_Store
 Thumbs.db
 *.bak
+graphify-out/
 
