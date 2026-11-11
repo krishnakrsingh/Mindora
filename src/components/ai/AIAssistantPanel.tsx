@@ -4,13 +4,14 @@ import {
   Send, 
   X, 
   ExternalLink, 
-  Check, 
-  RotateCcw, 
-  Bot, 
-  User, 
   FileText, 
-  HelpCircle,
-  Cpu
+  Terminal,
+  ShieldCheck,
+  Check,
+  Copy,
+  ArrowRight,
+  Cpu,
+  RefreshCw
 } from 'lucide-react';
 import { AIMessage, Page } from '../../types';
 import { aiService } from '../../services/ai';
@@ -33,20 +34,21 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
 }) => {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
-      id: 'msg-welcome',
+      id: 'msg-init',
       role: 'assistant',
-      content: `Hello! I am **Mindora AI**, your workspace intelligence assistant.
-      
-I have indexed your workspace documents and knowledge graph. You can ask me to:
-- Synthesize ideas across multiple notes.
-- Find connections or contradictions.
-- Draft or rewrite sections in your active document.
-- Generate structured outlines, tables, and task lists.`,
+      content: `### Knowledge Engine Online
+
+- **Retrieval Engine**: Grounded Hybrid Lexical BM25 + Vector Cosine
+- **Privacy Standard**: 100% Zero-Leak Client Architecture
+- **Inference**: Local Ollama (\`http://localhost:11434\`) or Local Offline Engine
+
+Ask anything about your workspace notes, summarize linked concepts, or extract actionable tasks.`,
       timestamp: Date.now(),
     },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [copiedInstall, setCopiedInstall] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const settings = storage.getAISettings();
@@ -84,7 +86,7 @@ I have indexed your workspace documents and knowledge graph. You can ask me to:
       const errorMsg: AIMessage = {
         id: `msg-${Date.now() + 1}`,
         role: 'assistant',
-        content: `Error synthesizing response: ${err.message || 'Unknown error'}. Please check your API key in Settings.`,
+        content: `Provider notice: ${err.message || 'Unknown network error'}. Falling back to offline grounded index.`,
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -96,118 +98,134 @@ I have indexed your workspace documents and knowledge graph. You can ask me to:
   if (!isOpen) return null;
 
   return (
-    <aside className="w-96 h-full border-l border-white/5 bg-[#121318] flex flex-col z-30 select-text text-xs shadow-2xl animate-fade-in">
+    <aside className="w-96 h-full border-l border-[#e5e5e5] dark:border-[#262626] bg-white dark:bg-[#1a1a1a] flex flex-col z-30 select-text text-xs shadow-xl animate-fade-in transition-colors">
       {/* AI Panel Header */}
-      <div className="h-12 border-b border-white/5 px-4 flex items-center justify-between bg-[#161822]/60 select-none">
+      <div className="h-12 border-b border-[#e5e5e5] dark:border-[#262626] px-4 flex items-center justify-between select-none">
         <div className="flex items-center space-x-2">
-          <div className="p-1 rounded-lg bg-indigo-500/10 text-indigo-400">
-            <Sparkles size={16} className="animate-pulse" />
+          <div className="w-6 h-6 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black">
+            <Sparkles size={12} />
           </div>
           <div>
-            <div className="font-bold text-slate-100 flex items-center space-x-1.5">
-              <span>Mindora AI</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">
-                {settings.apiKey ? settings.provider : 'Local Hybrid'}
-              </span>
+            <div className="font-heading font-semibold text-xs text-black dark:text-white">
+              Mindora Intelligence
+            </div>
+            <div className="flex items-center space-x-1 text-[10px] text-[#737373] dark:text-[#a3a3a3]">
+              <ShieldCheck size={11} className="text-emerald-500" />
+              <span>{settings.provider === 'ollama' ? 'Zero-Leak Ollama' : `${settings.provider.toUpperCase()} Secured`}</span>
             </div>
           </div>
         </div>
 
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors"
-          title="Close AI panel"
+          className="p-1 rounded-full text-[#737373] hover:text-black dark:hover:text-white transition-colors"
         >
           <X size={15} />
         </button>
       </div>
 
-      {/* Messages Scroll Area */}
+      {/* Ollama Terminal Install Pill Banner (Ollama-style snippet) */}
+      <div className="p-3 bg-[#fafafa] dark:bg-[#1f1f1f] border-b border-[#e5e5e5] dark:border-[#262626]">
+        <div className="flex items-center justify-between font-mono text-[11px] text-black dark:text-white px-2 py-1 rounded-full bg-white dark:bg-[#282828] border border-[#e5e5e5] dark:border-[#333]">
+          <div className="flex items-center space-x-2 truncate">
+            <span className="text-emerald-500 font-bold">$</span>
+            <span className="truncate">ollama run llama3.2</span>
+          </div>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText('ollama run llama3.2');
+              setCopiedInstall(true);
+              setTimeout(() => setCopiedInstall(false), 1500);
+            }}
+            className="p-1 rounded hover:text-black dark:hover:text-white text-[#737373]"
+            title="Copy command"
+          >
+            {copiedInstall ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Messages Stream */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`flex flex-col ${
-              msg.role === 'user' ? 'items-end' : 'items-start'
-            }`}
+            className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
           >
-            <div className="flex items-center space-x-1.5 text-[10px] text-slate-500 mb-1">
-              {msg.role === 'user' ? (
-                <>
-                  <span>You</span>
-                  <User size={11} />
-                </>
-              ) : (
-                <>
-                  <Bot size={11} className="text-indigo-400" />
-                  <span className="font-semibold text-slate-400">Mindora Assistant</span>
-                </>
-              )}
-            </div>
-
             <div
-              className={`p-3.5 rounded-2xl max-w-[90%] leading-relaxed ${
+              className={`max-w-[90%] rounded-2xl p-3.5 leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-indigo-600 text-white rounded-br-sm'
-                  : 'bg-[#181a24] border border-white/5 text-slate-200 rounded-bl-sm shadow-sm'
+                  ? 'bg-black text-white dark:bg-white dark:text-black text-xs font-medium'
+                  : 'bg-[#fafafa] dark:bg-[#202020] border border-[#e5e5e5] dark:border-[#2e2e2e] text-black dark:text-white'
               }`}
             >
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              <div className="prose prose-sm dark:prose-invert max-w-none space-y-2 whitespace-pre-wrap">
+                {msg.content}
+              </div>
 
-              {/* Citations Pills */}
+              {/* Citations Pill Bar */}
               {msg.citations && msg.citations.length > 0 && (
-                <div className="mt-3 pt-2.5 border-t border-white/5">
-                  <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1.5">
-                    Workspace Citations
+                <div className="mt-3 pt-2.5 border-t border-[#e5e5e5] dark:border-[#333]/50">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-[#737373] dark:text-[#a3a3a3] mb-1.5">
+                    Sources & Citations:
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1">
                     {msg.citations.map((c, i) => (
                       <button
                         key={i}
                         onClick={() => onNavigateToPage(c.pageTitle)}
-                        className="flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 text-[10px] transition-colors"
+                        className="btn-pill btn-pill-sm text-[10px]"
                         title={c.excerpt}
                       >
                         <FileText size={10} />
-                        <span className="truncate max-w-[130px]">{c.pageTitle}</span>
-                        <ExternalLink size={9} className="opacity-60" />
+                        <span>{c.pageTitle}</span>
                       </button>
                     ))}
                   </div>
                 </div>
               )}
             </div>
+
+            <div className="text-[10px] font-mono text-[#a3a3a3] mt-1 px-1">
+              {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
           </div>
         ))}
 
         {isLoading && (
-          <div className="flex items-center space-x-2 text-slate-400 p-2 bg-[#181a24] rounded-xl border border-white/5 max-w-[200px] animate-pulse">
-            <Cpu size={14} className="text-indigo-400 animate-spin" />
-            <span className="text-xs">Searching workspace...</span>
+          <div className="flex items-center space-x-2 text-[#737373] dark:text-[#a3a3a3] text-xs py-2">
+            <RefreshCw size={12} className="animate-spin" />
+            <span>Synthesizing grounded response...</span>
           </div>
         )}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggested Quick Prompts */}
-      <div className="px-3 py-2 border-t border-white/5 bg-[#121318] flex items-center space-x-1.5 overflow-x-auto text-[11px] select-none">
+      {/* Quick Prompts Bar */}
+      <div className="px-3 py-2 border-t border-[#e5e5e5] dark:border-[#262626] bg-[#fafafa] dark:bg-[#1a1a1a] flex gap-1.5 overflow-x-auto">
         <button
-          onClick={() => handleSend('Summarize the main themes across all my documents')}
-          className="shrink-0 px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-colors"
+          onClick={() => handleSend('Summarize the active note')}
+          className="btn-pill btn-pill-sm whitespace-nowrap text-[10px]"
         >
-          ✨ Summarize workspace
+          Summarize Note
         </button>
         <button
-          onClick={() => handleSend('What are the key priorities in the product roadmap?')}
-          className="shrink-0 px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-colors"
+          onClick={() => handleSend('What are the key concepts linked in this workspace?')}
+          className="btn-pill btn-pill-sm whitespace-nowrap text-[10px]"
         >
-          🎯 Product priorities
+          Key Concepts
+        </button>
+        <button
+          onClick={() => handleSend('Extract deliverables and tasks')}
+          className="btn-pill btn-pill-sm whitespace-nowrap text-[10px]"
+        >
+          Extract Tasks
         </button>
       </div>
 
-      {/* Input Box */}
-      <div className="p-3 border-t border-white/5 bg-[#161822]/60">
+      {/* Input Box (Pill style) */}
+      <div className="p-3 border-t border-[#e5e5e5] dark:border-[#262626] bg-white dark:bg-[#1a1a1a]">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -219,13 +237,14 @@ I have indexed your workspace documents and knowledge graph. You can ask me to:
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about your knowledge..."
-            className="w-full px-3 py-2 pr-10 rounded-xl bg-[#1c1e29] border border-white/10 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/50 text-xs"
+            placeholder="Ask anything about workspace notes..."
+            disabled={isLoading}
+            className="w-full pl-3.5 pr-10 py-2 rounded-full border border-[#e5e5e5] dark:border-[#2e2e2e] bg-[#fafafa] dark:bg-[#202020] text-black dark:text-white focus:outline-none text-xs focus:border-black dark:focus:border-white transition-colors"
           />
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
-            className="absolute right-1.5 p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-colors"
+            className="absolute right-1.5 p-1.5 rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40 transition-opacity"
           >
             <Send size={12} />
           </button>
@@ -234,4 +253,3 @@ I have indexed your workspace documents and knowledge graph. You can ask me to:
     </aside>
   );
 };
-

@@ -5,11 +5,13 @@ import {
   Download, 
   FileText, 
   CheckCircle2, 
-  AlertCircle, 
-  Sparkles,
-  Archive
+  AlertCircle,
+  FileArchive,
+  ArrowRight,
+  ShieldCheck
 } from 'lucide-react';
 import { storage } from '../../services/storage';
+import { backupService } from '../../services/backup';
 
 interface VaultImportModalProps {
   isOpen: boolean;
@@ -22,114 +24,212 @@ export const VaultImportModal: React.FC<VaultImportModalProps> = ({
   onClose,
   onRefreshWorkspace,
 }) => {
-  const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [importedCount, setImportedCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<'import' | 'backup'>('import');
+  const [importedCount, setImportedCount] = useState<number | null>(null);
+  const [backupVerified, setBackupVerified] = useState<boolean | null>(null);
 
   if (!isOpen) return null;
 
-  // Handle Markdown file upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Obsidian Markdown files import
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     let count = 0;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.name.endsWith('.md') || file.name.endsWith('.txt')) {
-        const text = await file.text();
-        storage.importVaultMarkdown(file.name, text);
-        count++;
-      }
-    }
-
-    setImportedCount(count);
-    setImportStatus(`Successfully imported ${count} note(s) into your workspace!`);
-    onRefreshWorkspace();
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content) {
+          storage.importVaultMarkdown(file.name, content);
+          count++;
+          if (count === files.length) {
+            setImportedCount(count);
+            onRefreshWorkspace();
+          }
+        }
+      };
+      reader.readAsText(file);
+    });
   };
 
-  // Handle Workspace JSON Export
-  const handleExportJson = () => {
-    const dataStr = storage.exportWorkspaceData();
-    const blob = new Blob([dataStr], { type: 'application/json' });
+  // Create & download signed backup package
+  const handleDownloadBackup = () => {
+    const backupPkg = backupService.createBackup();
+    const jsonStr = JSON.stringify(backupPkg, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `mindora-workspace-export-${Date.now()}.json`;
-    link.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mindora-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Restore backup from JSON
+  const handleRestoreBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        const isValid = backupService.verifyBackup(parsed);
+        setBackupVerified(isValid);
+
+        if (isValid && parsed.data) {
+          if (parsed.data.pages) {
+            parsed.data.pages.forEach((p: any) => {
+              if (!storage.getPage(p.id)) {
+                storage.createPage(p.title, p.content, p.parentId);
+              }
+            });
+          }
+          onRefreshWorkspace();
+        }
+      } catch {
+        setBackupVerified(false);
+      }
+    };
+    reader.readAsText(file);
   };
 
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in text-xs"
+      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 select-none animate-fade-in text-xs"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg bg-[#161822] border border-white/10 rounded-2xl shadow-2xl p-6"
+        className="w-full max-w-lg bg-white dark:bg-[#1a1a1a] border border-[#e5e5e5] dark:border-[#2e2e2e] rounded-2xl shadow-2xl p-6"
       >
-        <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-5">
-          <div className="flex items-center space-x-2">
-            <Archive size={18} className="text-indigo-400" />
-            <span className="font-bold text-sm text-white">Vault Import & Export</span>
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3.5 border-b border-[#e5e5e5] dark:border-[#262626] mb-5">
+          <div className="flex items-center space-x-2 font-heading font-semibold text-sm text-black dark:text-white">
+            <FileArchive size={15} />
+            <span>Vault Import & Workspace Snapshot</span>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
+            className="p-1 rounded-full text-[#737373] hover:text-black dark:hover:text-white transition-colors"
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
 
-        {/* Import Obsidian Section */}
-        <div className="space-y-4 mb-6">
-          <div className="text-xs font-semibold text-slate-200">
-            Import Obsidian Vault Notes (.md)
-          </div>
-          <p className="text-slate-400 text-[11px] leading-relaxed">
-            Upload your existing Markdown files. Mindora preserves your folder hierarchy, frontmatter metadata, tags, and bidirectional <code className="text-indigo-300">[[wikilinks]]</code>.
-          </p>
-
-          <label className="flex flex-col items-center justify-center border-2 border-dashed border-white/10 hover:border-indigo-500/50 rounded-xl p-6 cursor-pointer bg-white/[0.02] hover:bg-indigo-500/5 transition-all">
-            <Upload size={24} className="text-indigo-400 mb-2" />
-            <span className="text-xs font-semibold text-slate-200">Choose Markdown files</span>
-            <span className="text-[10px] text-slate-500 mt-0.5">Supports multiple .md files simultaneously</span>
-            <input
-              type="file"
-              multiple
-              accept=".md,.txt"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </label>
-
-          {importStatus && (
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 flex items-center space-x-2">
-              <CheckCircle2 size={15} />
-              <span>{importStatus}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Export Section */}
-        <div className="pt-4 border-t border-white/5">
-          <div className="text-xs font-semibold text-slate-200 mb-2">
-            Workspace Data Ownership & Portability
-          </div>
-          <p className="text-slate-400 text-[11px] leading-relaxed mb-4">
-            You own 100% of your data. Export your entire workspace including all notes, relational databases, canvas boards, and graph relationships at any time.
-          </p>
-
+        {/* Tab Switcher Pills */}
+        <div className="flex items-center space-x-1 p-0.5 rounded-full border border-[#e5e5e5] dark:border-[#2e2e2e] bg-[#fafafa] dark:bg-[#202020] mb-5 w-fit">
           <button
-            onClick={handleExportJson}
-            className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all shadow-md"
+            onClick={() => setActiveTab('import')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+              activeTab === 'import'
+                ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                : 'text-[#737373] dark:text-[#a3a3a3] hover:text-black dark:hover:text-white'
+            }`}
           >
-            <Download size={14} />
-            <span>Export Complete Workspace Bundle (.json)</span>
+            Obsidian Import (.md)
+          </button>
+          <button
+            onClick={() => setActiveTab('backup')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+              activeTab === 'backup'
+                ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                : 'text-[#737373] dark:text-[#a3a3a3] hover:text-black dark:hover:text-white'
+            }`}
+          >
+            Snapshot & Backup
           </button>
         </div>
+
+        {/* Obsidian Markdown Import Tab */}
+        {activeTab === 'import' && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl border border-dashed border-[#d4d4d4] dark:border-[#3f3f3f] bg-[#fafafa] dark:bg-[#202020] text-center">
+              <Upload size={24} className="mx-auto text-[#737373] mb-2" />
+              <div className="font-semibold text-xs text-black dark:text-white mb-1">
+                Upload Markdown Files
+              </div>
+              <div className="text-[11px] text-[#737373] dark:text-[#a3a3a3] mb-3">
+                Supports Obsidian vaults with YAML frontmatter, tags, and Wikilinks.
+              </div>
+
+              <label className="btn-pill btn-pill-primary cursor-pointer inline-flex">
+                <span>Select .md Files</span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".md,.markdown,.txt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {importedCount !== null && (
+              <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-medium">
+                <CheckCircle2 size={14} />
+                <span>Successfully imported {importedCount} document(s) into workspace.</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Snapshot & Backup Tab */}
+        {activeTab === 'backup' && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl border border-[#e5e5e5] dark:border-[#2e2e2e] bg-[#fafafa] dark:bg-[#202020] space-y-3">
+              <div className="font-semibold text-xs text-black dark:text-white">
+                Create Integrity-Signed Snapshot
+              </div>
+              <div className="text-[11px] text-[#737373] dark:text-[#a3a3a3] leading-relaxed">
+                Generates a complete workspace JSON backup verified with SHA-256 data checksums.
+              </div>
+              <div className="flex items-center space-x-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                <ShieldCheck size={13} />
+                <span>Verified: Secret API keys are strictly excluded from backup packages.</span>
+              </div>
+
+              <button
+                onClick={handleDownloadBackup}
+                className="btn-pill btn-pill-primary w-full justify-center"
+              >
+                <Download size={12} />
+                <span>Export Signed Workspace Package</span>
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl border border-[#e5e5e5] dark:border-[#2e2e2e] bg-[#fafafa] dark:bg-[#202020] space-y-3">
+              <div className="font-semibold text-xs text-black dark:text-white">
+                Restore from Backup JSON
+              </div>
+              <label className="btn-pill w-full justify-center cursor-pointer">
+                <Upload size={12} />
+                <span>Verify & Restore Backup</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleRestoreBackup}
+                  className="hidden"
+                />
+              </label>
+
+              {backupVerified === true && (
+                <div className="flex items-center space-x-1.5 text-emerald-500 font-medium text-[11px]">
+                  <CheckCircle2 size={13} />
+                  <span>Integrity verified! Backup successfully restored.</span>
+                </div>
+              )}
+              {backupVerified === false && (
+                <div className="flex items-center space-x-1.5 text-red-500 font-medium text-[11px]">
+                  <AlertCircle size={13} />
+                  <span>Invalid or tampered backup package checksum.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
-

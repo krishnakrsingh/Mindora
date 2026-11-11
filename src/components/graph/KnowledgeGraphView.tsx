@@ -3,11 +3,14 @@ import {
   ZoomIn, 
   ZoomOut, 
   RotateCcw, 
-  Filter, 
-  Layers, 
-  Info, 
   Share2,
-  Search
+  Search,
+  Pause,
+  Play,
+  ExternalLink,
+  X,
+  Layers,
+  Sliders
 } from 'lucide-react';
 import { GraphData, GraphNode } from '../../types';
 import { graphService } from '../../services/graph';
@@ -35,12 +38,14 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   onNavigateToPage,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [localRadius, setLocalRadius] = useState<number>(0); // 0 = global, 1 = 1-hop, 2 = 2-hop
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<SimNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<SimNode | null>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
+  const [isPhysicsRunning, setIsPhysicsRunning] = useState(true);
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [draggedNode, setDraggedNode] = useState<SimNode | null>(null);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
@@ -48,26 +53,24 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   const simLinksRef = useRef<SimLink[]>([]);
   const animFrameRef = useRef<number | null>(null);
 
+  // Build graph on mount
   useEffect(() => {
-    // 1. Fetch raw graph
-    const data: GraphData = graphService.buildWorkspaceGraph(activePageId, localRadius);
-
+    const data: GraphData = graphService.buildWorkspaceGraph(activePageId, 0);
     const width = window.innerWidth - 300;
     const height = window.innerHeight - 100;
 
-    // 2. Initialize positions
     const nodeMap = new Map<string, SimNode>();
     const simNodes: SimNode[] = data.nodes.map((n, i) => {
       const angle = (i / Math.max(1, data.nodes.length)) * Math.PI * 2;
-      const dist = 120 + Math.random() * 140;
-      const radius = Math.max(8, Math.min(24, 7 + n.degree * 3.5));
+      const dist = 160 + Math.random() * 100;
+      const radius = Math.max(7, Math.min(22, 6 + n.degree * 3));
 
       const simNode: SimNode = {
         ...n,
         x: width / 2 + Math.cos(angle) * dist,
         y: height / 2 + Math.sin(angle) * dist,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: (Math.random() - 0.5) * 0.5,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.3,
         radius,
       };
       nodeMap.set(n.id, simNode);
@@ -86,88 +89,66 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     simNodesRef.current = simNodes;
     simLinksRef.current = simLinks;
 
-    // 3. Force-directed simulation loop
-    let tick = 0;
+    // Simulation loop
     const runSimulation = () => {
-      tick++;
-      const nodes = simNodesRef.current;
-      const links = simLinksRef.current;
-      const cx = width / 2;
-      const cy = height / 2;
+      if (isPhysicsRunning) {
+        const nodes = simNodesRef.current;
+        const links = simLinksRef.current;
+        const cx = width / 2;
+        const cy = height / 2;
 
-      // Physics constants
-      const repulsion = 450;
-      const springLength = 110;
-      const springStrength = 0.04;
-      const centerStrength = 0.015;
-      const damping = 0.88;
+        const repulsion = 450;
+        const springLength = 110;
+        const springK = 0.035;
+        const centerGravity = 0.015;
 
-      // Node repulsion
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const n1 = nodes[i];
-          const n2 = nodes[j];
-          const dx = n2.x - n1.x;
-          const dy = n2.y - n1.y;
-          const distSq = dx * dx + dy * dy + 1;
-          const dist = Math.sqrt(distSq);
-
-          if (dist < 400) {
-            const force = repulsion / distSq;
-            const fx = (dx / dist) * force;
-            const fy = (dy / dist) * force;
-
-            if (n1 !== draggedNode) {
-              n1.vx -= fx;
-              n1.vy -= fy;
-            }
-            if (n2 !== draggedNode) {
-              n2.vx += fx;
-              n2.vy += fy;
+        // Node repulsion
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const dx = nodes[j].x - nodes[i].x;
+            const dy = nodes[j].y - nodes[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < 400) {
+              const force = repulsion / (dist * dist);
+              const fx = (dx / dist) * force;
+              const fy = (dy / dist) * force;
+              nodes[i].vx -= fx;
+              nodes[i].vy -= fy;
+              nodes[j].vx += fx;
+              nodes[j].vy += fy;
             }
           }
         }
-      }
 
-      // Link attraction
-      for (const link of links) {
-        const dx = link.target.x - link.source.x;
-        const dy = link.target.y - link.source.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const displacement = dist - springLength;
-        const force = displacement * springStrength;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-
-        if (link.source !== draggedNode) {
+        // Spring links
+        for (const link of links) {
+          const dx = link.target.x - link.source.x;
+          const dy = link.target.y - link.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const delta = dist - springLength;
+          const force = delta * springK;
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
           link.source.vx += fx;
           link.source.vy += fy;
-        }
-        if (link.target !== draggedNode) {
           link.target.vx -= fx;
           link.target.vy -= fy;
         }
+
+        // Center gravity and velocity damping
+        for (const node of nodes) {
+          if (node === draggedNode) continue;
+          node.vx += (cx - node.x) * centerGravity;
+          node.vy += (cy - node.y) * centerGravity;
+          node.vx *= 0.88;
+          node.vy *= 0.88;
+          node.x += node.vx;
+          node.y += node.vy;
+        }
       }
 
-      // Center gravity & update
-      for (const node of nodes) {
-        if (node === draggedNode) continue;
-        node.vx += (cx - node.x) * centerStrength;
-        node.vy += (cy - node.y) * centerStrength;
-
-        node.vx *= damping;
-        node.vy *= damping;
-
-        node.x += node.vx;
-        node.y += node.vy;
-      }
-
-      // Draw frame
-      drawCanvas();
-
-      if (tick < 600 || draggedNode) {
-        animFrameRef.current = requestAnimationFrame(runSimulation);
-      }
+      draw();
+      animFrameRef.current = requestAnimationFrame(runSimulation);
     };
 
     animFrameRef.current = requestAnimationFrame(runSimulation);
@@ -175,17 +156,20 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [activePageId, localRadius]);
+  }, [activePageId, isPhysicsRunning]);
 
-  // Canvas render function
-  const drawCanvas = () => {
+  // Canvas drawing routine
+  const draw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const width = canvas.width;
+    const height = canvas.height;
+    const isDark = document.documentElement.classList.contains('dark');
 
+    ctx.clearRect(0, 0, width, height);
     ctx.save();
     ctx.translate(offset.x, offset.y);
     ctx.scale(zoom, zoom);
@@ -195,48 +179,48 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
 
     // Draw Links
     for (const link of links) {
-      const isHighlighted =
-        hoveredNode && (link.source.id === hoveredNode.id || link.target.id === hoveredNode.id);
-
       ctx.beginPath();
       ctx.moveTo(link.source.x, link.source.y);
       ctx.lineTo(link.target.x, link.target.y);
-      ctx.strokeStyle = isHighlighted ? 'rgba(129, 140, 248, 0.8)' : 'rgba(255, 255, 255, 0.08)';
-      ctx.lineWidth = isHighlighted ? 2 : 1;
+      ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)';
+      ctx.lineWidth = 1;
       ctx.stroke();
     }
 
     // Draw Nodes
     for (const node of nodes) {
+      const isSelected = selectedNode?.id === node.id;
       const isHovered = hoveredNode?.id === node.id;
-      const isActive = activePageId === node.id;
       const matchesSearch = searchQuery && node.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesTag = selectedTag && node.tags?.includes(selectedTag);
 
       ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius + (isHovered ? 4 : 0), 0, Math.PI * 2);
+      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
 
-      if (isActive) {
-        ctx.fillStyle = '#38BDF8';
-      } else if (node.type === 'database') {
-        ctx.fillStyle = '#34D399';
-      } else if (matchesSearch) {
-        ctx.fillStyle = '#F43F5E';
+      if (matchesSearch || isSelected) {
+        ctx.fillStyle = isDark ? '#ffffff' : '#000000';
+      } else if (matchesTag) {
+        ctx.fillStyle = '#38bdf8';
+      } else if (isHovered) {
+        ctx.fillStyle = isDark ? '#d4d4d4' : '#525252';
       } else {
-        ctx.fillStyle = '#818CF8';
+        ctx.fillStyle = isDark ? '#3f3f3f' : '#e5e5e5';
       }
 
       ctx.fill();
 
-      // Outer glow for hovered or active node
-      if (isHovered || isActive) {
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = '#FFFFFF';
+      // Outer ring for active or selected
+      if (isSelected || node.id === activePageId) {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = isDark ? '#ffffff' : '#000000';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       }
 
-      // Text label
-      ctx.font = `${Math.max(10, 11 / zoom)}px "Plus Jakarta Sans", sans-serif`;
-      ctx.fillStyle = isHovered ? '#FFFFFF' : 'rgba(226, 232, 240, 0.8)';
+      // Label
+      ctx.font = `${isSelected || isHovered ? '600' : '500'} 11px Inter, sans-serif`;
+      ctx.fillStyle = isDark ? (isSelected ? '#ffffff' : '#a3a3a3') : (isSelected ? '#000000' : '#525252');
       ctx.textAlign = 'center';
       ctx.fillText(node.title, node.x, node.y + node.radius + 14);
     }
@@ -244,7 +228,21 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     ctx.restore();
   };
 
-  // Mouse event listeners for pan/zoom/hover
+  // Resize canvas to window
+  useEffect(() => {
+    const handleResize = () => {
+      if (canvasRef.current) {
+        canvasRef.current.width = canvasRef.current.clientWidth;
+        canvasRef.current.height = canvasRef.current.clientHeight;
+        draw();
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Mouse drag & interaction
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -252,18 +250,19 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     const mouseX = (e.clientX - rect.left - offset.x) / zoom;
     const mouseY = (e.clientY - rect.top - offset.y) / zoom;
 
-    // Check if clicked a node
-    for (const node of simNodesRef.current) {
-      const dx = mouseX - node.x;
-      const dy = mouseY - node.y;
-      if (dx * dx + dy * dy <= (node.radius + 4) * (node.radius + 4)) {
-        setDraggedNode(node);
-        return;
-      }
-    }
+    const clicked = simNodesRef.current.find((n) => {
+      const dx = n.x - mouseX;
+      const dy = n.y - mouseY;
+      return Math.sqrt(dx * dx + dy * dy) <= n.radius + 4;
+    });
 
-    setIsDragging(true);
-    lastMousePos.current = { x: e.clientX, y: e.clientY };
+    if (clicked) {
+      setDraggedNode(clicked);
+      setSelectedNode(clicked);
+    } else {
+      setIsDraggingCanvas(true);
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -278,148 +277,169 @@ export const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
       draggedNode.y = mouseY;
       draggedNode.vx = 0;
       draggedNode.vy = 0;
-      drawCanvas();
       return;
     }
 
-    if (isDragging) {
+    if (isDraggingCanvas) {
       const dx = e.clientX - lastMousePos.current.x;
       const dy = e.clientY - lastMousePos.current.y;
       lastMousePos.current = { x: e.clientX, y: e.clientY };
       setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-      drawCanvas();
       return;
     }
 
     // Hover detection
-    let found: SimNode | null = null;
-    for (const node of simNodesRef.current) {
-      const dx = mouseX - node.x;
-      const dy = mouseY - node.y;
-      if (dx * dx + dy * dy <= (node.radius + 4) * (node.radius + 4)) {
-        found = node;
-        break;
-      }
-    }
-    if (found !== hoveredNode) {
-      setHoveredNode(found);
-      drawCanvas();
-    }
+    const hovered = simNodesRef.current.find((n) => {
+      const dx = n.x - mouseX;
+      const dy = n.y - mouseY;
+      return Math.sqrt(dx * dx + dy * dy) <= n.radius + 4;
+    });
+    setHoveredNode(hovered || null);
   };
 
   const handleMouseUp = () => {
-    setIsDragging(false);
     setDraggedNode(null);
+    setIsDraggingCanvas(false);
   };
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (hoveredNode) {
-      onNavigateToPage(hoveredNode.id);
-    }
-  };
-
-  const handleZoom = (delta: number) => {
-    setZoom((prev) => Math.min(2.5, Math.max(0.4, prev + delta)));
-    setTimeout(drawCanvas, 10);
-  };
-
-  const handleReset = () => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-    setTimeout(drawCanvas, 10);
-  };
+  // Collect all unique tags for filter
+  const allGraphTags = Array.from(
+    new Set(simNodesRef.current.flatMap((n) => n.tags || []))
+  );
 
   return (
-    <div className="flex-1 h-full flex flex-col bg-[#0b0c10] overflow-hidden relative select-none">
-      {/* Top Controls Overlay */}
-      <div className="absolute top-4 left-4 z-10 flex items-center space-x-2 bg-[#161822]/90 backdrop-blur-md p-1.5 rounded-xl border border-white/10 shadow-xl text-xs">
-        <div className="flex items-center space-x-1.5 px-2 py-1 bg-white/5 rounded-lg text-slate-300">
-          <Share2 size={13} className="text-indigo-400" />
-          <span className="font-semibold">Knowledge Graph</span>
+    <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-white dark:bg-[#171717] select-none transition-colors">
+      {/* Top Floating Control Toolbar (Pill style) */}
+      <div className="absolute top-4 left-6 right-6 flex items-center justify-between pointer-events-none z-20">
+        <div className="flex items-center space-x-2 pointer-events-auto">
+          {/* Search Pill */}
+          <div className="search-pill w-56">
+            <Search size={13} className="text-[#737373]" />
+            <input
+              type="text"
+              placeholder="Search graph..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent focus:outline-none text-xs w-full text-black dark:text-white"
+            />
+          </div>
+
+          {/* Tag Filter Chips */}
+          <div className="hidden md:flex items-center space-x-1">
+            {allGraphTags.slice(0, 4).map((tag) => (
+              <button
+                key={tag}
+                onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+                className={`btn-pill btn-pill-sm ${selectedTag === tag ? 'btn-pill-active' : ''}`}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <button
-          onClick={() => setLocalRadius(localRadius === 0 ? 1 : 0)}
-          className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg transition-colors ${
-            localRadius > 0
-              ? 'bg-indigo-600 text-white font-medium'
-              : 'text-slate-400 hover:text-white hover:bg-white/5'
-          }`}
-          title="Toggle Local Subgraph vs Global Graph"
-        >
-          <Layers size={13} />
-          <span>{localRadius > 0 ? 'Local 1-Hop' : 'Global Graph'}</span>
-        </button>
-
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Search nodes..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setTimeout(drawCanvas, 10);
+        {/* Zoom & Physics Toolbar */}
+        <div className="flex items-center space-x-1.5 pointer-events-auto">
+          <button
+            onClick={() => setIsPhysicsRunning(!isPhysicsRunning)}
+            className="btn-pill btn-pill-sm"
+            title={isPhysicsRunning ? 'Pause Force Simulation' : 'Resume Force Simulation'}
+          >
+            {isPhysicsRunning ? <Pause size={12} /> : <Play size={12} />}
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.min(2.5, z * 1.2))}
+            className="btn-pill btn-pill-sm"
+            title="Zoom In"
+          >
+            <ZoomIn size={12} />
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.max(0.4, z * 0.8))}
+            className="btn-pill btn-pill-sm"
+            title="Zoom Out"
+          >
+            <ZoomOut size={12} />
+          </button>
+          <button
+            onClick={() => {
+              setZoom(1);
+              setOffset({ x: 0, y: 0 });
             }}
-            className="w-36 px-2.5 py-1 pl-7 bg-black/40 border border-white/5 rounded-lg text-slate-200 focus:outline-none"
-          />
-          <Search size={12} className="absolute left-2.5 top-2 text-slate-500" />
+            className="btn-pill btn-pill-sm"
+            title="Reset Graph Center"
+          >
+            <RotateCcw size={12} />
+          </button>
         </div>
       </div>
 
-      {/* Floating Zoom & Pan Controls */}
-      <div className="absolute bottom-4 right-4 z-10 flex flex-col space-y-1.5 bg-[#161822]/90 backdrop-blur-md p-1.5 rounded-xl border border-white/10 shadow-xl">
-        <button
-          onClick={() => handleZoom(0.2)}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
-          title="Zoom In"
-        >
-          <ZoomIn size={15} />
-        </button>
-        <button
-          onClick={() => handleZoom(-0.2)}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
-          title="Zoom Out"
-        >
-          <ZoomOut size={15} />
-        </button>
-        <button
-          onClick={handleReset}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
-          title="Reset View"
-        >
-          <RotateCcw size={15} />
-        </button>
-      </div>
-
-      {/* Hover Tooltip Overlay */}
-      {hoveredNode && (
-        <div className="absolute top-16 left-4 z-20 bg-[#1e2029]/95 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-2xl max-w-xs animate-fade-in text-xs">
-          <div className="flex items-center space-x-2 font-bold text-slate-100 mb-1">
-            <span className="w-2 h-2 rounded-full bg-indigo-400" />
-            <span className="truncate">{hoveredNode.title}</span>
-          </div>
-          <p className="text-[11px] text-slate-400 line-clamp-3 mb-2 leading-relaxed">
-            {hoveredNode.excerpt || 'No preview text.'}
-          </p>
-          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-white/5">
-            <span>{hoveredNode.degree} Connections</span>
-            <span className="text-indigo-400 font-medium">Click to open</span>
-          </div>
-        </div>
-      )}
-
-      {/* Physics Canvas */}
+      {/* Main Graph Canvas */}
       <canvas
         ref={canvasRef}
-        width={window.innerWidth - 260}
-        height={window.innerHeight - 50}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onClick={handleCanvasClick}
         className="w-full h-full cursor-grab active:cursor-grabbing"
       />
+
+      {/* Selected Node Inspector Drawer */}
+      {selectedNode && (
+        <div className="absolute right-6 top-16 bottom-6 w-80 bg-white dark:bg-[#1e1e1e] border border-[#e5e5e5] dark:border-[#333] rounded-2xl shadow-xl p-5 flex flex-col justify-between z-30 animate-fade-in text-xs">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-[#e5e5e5] dark:border-[#2e2e2e] mb-3">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-[#737373]">
+                Node Inspector
+              </span>
+              <button
+                onClick={() => setSelectedNode(null)}
+                className="p-1 rounded-full text-[#737373] hover:text-black dark:hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="font-heading font-bold text-base text-black dark:text-white mb-2">
+              {selectedNode.title}
+            </div>
+
+            <div className="space-y-2 text-[#737373] dark:text-[#a3a3a3]">
+              <div className="flex justify-between">
+                <span>Degree (Connections):</span>
+                <span className="font-mono font-semibold text-black dark:text-white">{selectedNode.degree}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Node Type:</span>
+                <span className="font-mono uppercase">{selectedNode.type}</span>
+              </div>
+            </div>
+
+            {selectedNode.tags && selectedNode.tags.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-[#e5e5e5] dark:border-[#2e2e2e]">
+                <div className="text-[11px] font-medium text-[#737373] mb-1.5">Tags:</div>
+                <div className="flex flex-wrap gap-1">
+                  {selectedNode.tags.map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-0.5 rounded-full text-[10px] bg-[#fafafa] dark:bg-[#282828] border border-[#e5e5e5] dark:border-[#333] text-[#525252] dark:text-[#d4d4d4]"
+                    >
+                      #{t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => onNavigateToPage(selectedNode.title)}
+            className="btn-pill-primary w-full justify-center"
+          >
+            <ExternalLink size={12} />
+            <span>Open Document</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
-

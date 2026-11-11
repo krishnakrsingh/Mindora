@@ -1,4 +1,4 @@
-import { Page, AISettings, AICitation, AIMessage } from '../types';
+import { Page, AISettings, AICitation } from '../types';
 import { storage } from './storage';
 
 export interface RetrievalChunk {
@@ -171,7 +171,16 @@ WORKSPACE CONTEXT:
 ${contextStr || '(No matching workspace documents found for this query)'}
 `;
 
-    // Attempt real API call if key is configured
+    // 1. Check for Ollama (local inference - requires no API key!)
+    if (settings.provider === 'ollama') {
+      try {
+        return await this.callOllama(settings, systemPrompt, userPrompt, citations);
+      } catch (err: any) {
+        console.warn('Ollama local call failed, falling back to local synthesis engine:', err);
+      }
+    }
+
+    // 2. Attempt real cloud API call if key is configured
     if (settings.apiKey && settings.apiKey.trim().length > 0) {
       try {
         if (settings.provider === 'gemini') {
@@ -180,13 +189,15 @@ ${contextStr || '(No matching workspace documents found for this query)'}
           return await this.callOpenAI(settings, systemPrompt, userPrompt, citations);
         } else if (settings.provider === 'anthropic') {
           return await this.callAnthropic(settings, systemPrompt, userPrompt, citations);
+        } else if (settings.provider === 'openrouter') {
+          return await this.callOpenRouter(settings, systemPrompt, userPrompt, citations);
         }
       } catch (err: any) {
         console.warn('Real AI provider call failed, falling back to local synthesis engine:', err);
       }
     }
 
-    // Local Grounded Synthesis Engine (runs zero-cloud, 100% offline)
+    // 3. Local Grounded Synthesis Engine (runs zero-cloud, 100% offline)
     const localResponse = this.synthesizeLocally(userPrompt, chunks, activePage);
     return {
       text: localResponse,
@@ -229,7 +240,43 @@ ${highlights}
 ### Synthesis & Next Actions
 Mindora's semantic index identified these connections directly from your active knowledge base. You can explore how these interact visually in the **Knowledge Graph** or deepen the writing in the **Block Editor**.
 
-*(To enable real-time cloud LLM generation via Gemini, Claude, or OpenAI, enter your API key in Workspace Settings).*`;
+*(To enable real-time local Ollama or cloud models, configure your endpoint in Workspace Settings).*`;
+  }
+
+  // Provider: Local Ollama (Zero-key, 100% private)
+  private async callOllama(
+    settings: AISettings,
+    systemPrompt: string,
+    userPrompt: string,
+    citations: AICitation[]
+  ): Promise<{ text: string; citations: AICitation[] }> {
+    const baseUrl = (settings.baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
+    const model = settings.model || 'llama3.2';
+
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        stream: false,
+        options: {
+          temperature: settings.temperature ?? 0.7,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Ollama error (${res.status}): Make sure Ollama is running at ${baseUrl}`);
+    }
+
+    const data = await res.json();
+    const text = data?.message?.content || data?.response || 'No response from Ollama.';
+    return { text, citations };
   }
 
   // Provider: Google Gemini
@@ -239,7 +286,7 @@ Mindora's semantic index identified these connections directly from your active 
     userPrompt: string,
     citations: AICitation[]
   ): Promise<{ text: string; citations: AICitation[] }> {
-    const model = settings.model || 'gemini-3.6-flash';
+    const model = settings.model || 'gemini-2.5-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
     const res = await fetch(url, {
@@ -336,6 +383,92 @@ Mindora's semantic index identified these connections directly from your active 
     return { text, citations };
   }
 
+  // Provider: OpenRouter
+  private async callOpenRouter(
+    settings: AISettings,
+    systemPrompt: string,
+    userPrompt: string,
+    citations: AICitation[]
+  ): Promise<{ text: string; citations: AICitation[] }> {
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const model = settings.model || 'meta-llama/llama-3.2-3b-instruct:free';
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+        'HTTP-Referer': 'https://mindora.dev',
+        'X-Title': 'Mindora Knowledge Workspace',
+      },
+      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: settings.temperature,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`OpenRouter API error: ${res.status} ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content || 'No response generated.';
+    return { text, citations };
+  }
+
+  // Lightweight connection tester for settings dialog
+  public async testConnection(settings: AISettings): Promise<{ success: boolean; message: string; models?: string[] }> {
+    if (settings.provider === 'ollama') {
+      const baseUrl = (settings.baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
+      try {
+        const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(4000) });
+        if (!res.ok) {
+          return { success: false, message: `Ollama returned HTTP ${res.status}. Is Ollama service running?` };
+        }
+        const data = await res.json();
+        const models = (data.models || []).map((m: any) => m.name);
+        return {
+          success: true,
+          message: `Connected to Ollama! Found ${models.length} model(s).`,
+          models,
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          message: `Could not connect to Ollama at ${baseUrl}. Ensure Ollama is running ('ollama serve').`,
+        };
+      }
+    }
+
+    if (!settings.apiKey || settings.apiKey.trim().length === 0) {
+      return { success: false, message: 'Please enter an API key to test connection.' };
+    }
+
+    try {
+      if (settings.provider === 'gemini') {
+        const testRes = await this.callGemini(settings, 'Return only "ok"', 'test', []);
+        return { success: !!testRes.text, message: 'Google Gemini connected successfully.' };
+      } else if (settings.provider === 'openai') {
+        const testRes = await this.callOpenAI(settings, 'Return only "ok"', 'test', []);
+        return { success: !!testRes.text, message: 'OpenAI connected successfully.' };
+      } else if (settings.provider === 'anthropic') {
+        const testRes = await this.callAnthropic(settings, 'Return only "ok"', 'test', []);
+        return { success: !!testRes.text, message: 'Anthropic Claude connected successfully.' };
+      } else if (settings.provider === 'openrouter') {
+        const testRes = await this.callOpenRouter(settings, 'Return only "ok"', 'test', []);
+        return { success: !!testRes.text, message: 'OpenRouter connected successfully.' };
+      }
+      return { success: true, message: 'Provider validated.' };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Connection test failed.' };
+    }
+  }
+
   // Inline AI action helper
   public async executeInlineAction(
     action: 'improve' | 'summarize' | 'outline' | 'tasks' | 'explain',
@@ -356,4 +489,3 @@ Mindora's semantic index identified these connections directly from your active 
 }
 
 export const aiService = new AIService();
-

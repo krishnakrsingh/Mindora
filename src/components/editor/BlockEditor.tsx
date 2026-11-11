@@ -3,25 +3,28 @@ import {
   Bold, 
   Italic, 
   List, 
-  ListOrdered, 
   CheckSquare, 
   Code, 
   Heading1, 
   Heading2, 
   Heading3, 
   Quote, 
-  Table, 
+  Table as TableIcon, 
   Sparkles, 
   Eye, 
   Edit3, 
   Columns, 
-  Check, 
   Copy, 
+  Download,
   ExternalLink,
+  ArrowRight,
+  Plus,
+  X,
+  Star,
+  Check,
+  FileCode,
   Info,
-  AlertTriangle,
-  Lightbulb,
-  ArrowRight
+  AlertTriangle
 } from 'lucide-react';
 import { Page } from '../../types';
 import { storage } from '../../services/storage';
@@ -47,11 +50,13 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   const [editorMode, setEditorMode] = useState<'visual' | 'split' | 'read'>('visual');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
-  const [slashMenuPos, setSlashMenuPos] = useState({ top: 0, left: 0 });
+  const [slashFilter, setSlashFilter] = useState('');
   const [wikilinkMenuOpen, setWikilinkMenuOpen] = useState(false);
   const [wikilinkQuery, setWikilinkQuery] = useState('');
-  const [selectedText, setSelectedText] = useState('');
-  const [selectionToolbarPos, setSelectionToolbarPos] = useState<{ top: number; left: number } | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const [newTagInputOpen, setNewTagInputOpen] = useState(false);
+  const [newTagText, setNewTagText] = useState('');
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
@@ -89,9 +94,9 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     const textBeforeCursor = val.slice(0, cursor);
     const lastLine = textBeforeCursor.split('\n').pop() || '';
 
-    if (lastLine.endsWith('/')) {
+    if (lastLine.startsWith('/')) {
       setSlashMenuOpen(true);
-      setSlashMenuPos({ top: 120, left: 60 });
+      setSlashFilter(lastLine.slice(1).toLowerCase());
     } else {
       setSlashMenuOpen(false);
     }
@@ -106,487 +111,496 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     }
   };
 
-  // Handle selection for floating AI bar
-  const handleSelectText = () => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    if (start !== end && end - start > 3) {
-      const selected = textarea.value.slice(start, end);
-      setSelectedText(selected);
-      setSelectionToolbarPos({ top: 70, left: 180 });
-    } else {
-      setSelectedText('');
-      setSelectionToolbarPos(null);
-    }
-  };
-
-  // Insert slash command action
-  const executeSlashCommand = (snippet: string) => {
+  // Insert template or block at cursor position
+  const insertTextAtCursor = (textToInsert: string, replaceSlash = false) => {
     if (!textareaRef.current) return;
     const textarea = textareaRef.current;
-    const cursor = textarea.selectionStart;
-    const before = content.slice(0, cursor);
-    const after = content.slice(cursor);
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
 
-    // Remove the trailing '/'
-    const cleanBefore = before.endsWith('/') ? before.slice(0, -1) : before;
-    const newContent = cleanBefore + snippet + after;
-    setContent(newContent);
-    triggerAutoSave(title, newContent);
+    let before = content.slice(0, start);
+    let after = content.slice(end);
+
+    if (replaceSlash) {
+      const lastSlashIdx = before.lastIndexOf('/');
+      if (lastSlashIdx >= 0) {
+        before = before.slice(0, lastSlashIdx);
+      }
+    }
+
+    const updated = before + textToInsert + after;
+    setContent(updated);
+    triggerAutoSave(title, updated);
     setSlashMenuOpen(false);
+    setWikilinkMenuOpen(false);
 
     setTimeout(() => {
       textarea.focus();
-      const newCursor = cleanBefore.length + snippet.length;
+      const newCursor = before.length + textToInsert.length;
       textarea.setSelectionRange(newCursor, newCursor);
     }, 50);
   };
 
-  // Insert selected wikilink
-  const insertWikilink = (targetTitle: string) => {
-    if (!textareaRef.current) return;
-    const textarea = textareaRef.current;
-    const cursor = textarea.selectionStart;
-    const before = content.slice(0, cursor);
-    const after = content.slice(cursor);
-
-    const match = before.match(/\[\[([^\]]*)$/);
-    if (match) {
-      const replaceStart = match.index!;
-      const newContent = content.slice(0, replaceStart) + `[[${targetTitle}]] ` + after;
-      setContent(newContent);
-      triggerAutoSave(title, newContent);
-      setWikilinkMenuOpen(false);
-    }
-  };
-
-  // Interactive checkbox toggler in preview
-  const toggleCheckbox = (lineIndex: number) => {
+  // Toggle checklist checkbox directly inside markdown
+  const handleToggleCheckbox = (lineIndex: number) => {
     const lines = content.split('\n');
-    const line = lines[lineIndex];
-    if (!line) return;
-
-    if (line.includes('- [ ]')) {
-      lines[lineIndex] = line.replace('- [ ]', '- [x]');
-    } else if (line.includes('- [x]')) {
-      lines[lineIndex] = line.replace('- [x]', '- [ ]');
+    if (lineIndex >= 0 && lineIndex < lines.length) {
+      const line = lines[lineIndex];
+      if (line.includes('- [ ]')) {
+        lines[lineIndex] = line.replace('- [ ]', '- [x]');
+      } else if (line.includes('- [x]')) {
+        lines[lineIndex] = line.replace('- [x]', '- [ ]');
+      }
+      const updated = lines.join('\n');
+      setContent(updated);
+      triggerAutoSave(title, updated);
     }
-    const newContent = lines.join('\n');
-    setContent(newContent);
-    triggerAutoSave(title, newContent);
   };
 
-  // Backlinks for active page
-  const backlinks = graphService.getBacklinks(page.id);
-  const allWorkspacePages = storage.getPages();
-  const filteredWikilinkSuggestions = allWorkspacePages.filter((p) =>
-    p.title.toLowerCase().includes(wikilinkQuery.toLowerCase())
+  // Add tag
+  const handleAddTag = () => {
+    if (!newTagText.trim()) return;
+    const clean = newTagText.trim().replace(/^#/, '').toLowerCase();
+    const existing = page.tags || [];
+    if (!existing.includes(clean)) {
+      onUpdatePage({ tags: [...existing, clean] });
+    }
+    setNewTagText('');
+    setNewTagInputOpen(false);
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    const existing = page.tags || [];
+    onUpdatePage({ tags: existing.filter((t) => t !== tagToRemove) });
+  };
+
+  // Execute AI action on document
+  const handleAiAction = async (action: 'improve' | 'summarize' | 'outline' | 'tasks' | 'explain') => {
+    setIsAiProcessing(true);
+    try {
+      const prompt = content.slice(0, 3000);
+      const res = await aiService.executeInlineAction(action, prompt);
+      if (res && res.trim()) {
+        const appended = `${content}\n\n---\n\n### Mindora AI (${action.toUpperCase()})\n\n${res}`;
+        setContent(appended);
+        triggerAutoSave(title, appended);
+      }
+    } catch (err: any) {
+      console.error('AI Inline Action failed:', err);
+    } finally {
+      setIsAiProcessing(false);
+    }
+  };
+
+  // Word count and reading time
+  const wordCount = content.trim().length > 0 ? content.trim().split(/\s+/).length : 0;
+  const readingTime = Math.max(1, Math.ceil(wordCount / 200));
+
+  // Backlinks
+  const backlinks = graphService.getBacklinks(page.title);
+
+  // Available pages for wikilink autocomplete
+  const allPages = storage.getPages();
+  const filteredWikilinkPages = allPages.filter(
+    (p) => p.id !== page.id && p.title.toLowerCase().includes(wikilinkQuery.toLowerCase())
   );
 
-  // Markdown renderer with interactive widgets
+  // Slash commands registry
+  const slashCommands = [
+    { title: 'Heading 1', desc: 'Large section heading', icon: Heading1, action: () => insertTextAtCursor('\n# ', true) },
+    { title: 'Heading 2', desc: 'Medium section heading', icon: Heading2, action: () => insertTextAtCursor('\n## ', true) },
+    { title: 'Heading 3', desc: 'Small section heading', icon: Heading3, action: () => insertTextAtCursor('\n### ', true) },
+    { title: 'To-do List', desc: 'Interactive task checklist', icon: CheckSquare, action: () => insertTextAtCursor('\n- [ ] ', true) },
+    { title: 'Bullet List', desc: 'Simple bulleted list', icon: List, action: () => insertTextAtCursor('\n- ', true) },
+    { title: 'Code Block', desc: 'Monospace code block', icon: Code, action: () => insertTextAtCursor('\n```typescript\n\n```', true) },
+    { title: 'Callout Note', desc: 'Highlighted alert box', icon: Info, action: () => insertTextAtCursor('\n> [!NOTE]\n> Enter important note here.\n', true) },
+    { title: 'Table', desc: 'Structured markdown table', icon: TableIcon, action: () => insertTextAtCursor('\n| Column 1 | Column 2 |\n|---|---|\n| Item 1 | Item 2 |\n', true) },
+    { title: 'Mermaid Diagram', desc: 'Flowchart or architecture map', icon: FileCode, action: () => insertTextAtCursor('\n```mermaid\ngraph TD\nA[Client] --> B[Mindora Engine]\nB --> C[Ollama / Local AI]\n```\n', true) },
+    { title: 'Divider', desc: 'Visual horizontal line', icon: Edit3, action: () => insertTextAtCursor('\n---\n', true) },
+  ];
+
+  const filteredSlashCommands = slashCommands.filter(
+    (c) => c.title.toLowerCase().includes(slashFilter) || c.desc.toLowerCase().includes(slashFilter)
+  );
+
+  // Interactive Markdown Renderer
   const renderInteractiveMarkdown = (text: string) => {
     const lines = text.split('\n');
-    const elements: React.ReactNode[] = [];
     let inCodeBlock = false;
+    let codeLanguage = '';
     let codeBuffer: string[] = [];
-    let codeLang = '';
+    const elements: React.ReactNode[] = [];
 
-    lines.forEach((line, index) => {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Code block start / end
       if (line.startsWith('```')) {
         if (!inCodeBlock) {
           inCodeBlock = true;
-          codeLang = line.replace(/^```/, '').trim();
+          codeLanguage = line.replace(/^```/, '').trim() || 'text';
           codeBuffer = [];
         } else {
           inCodeBlock = false;
-          const codeText = codeBuffer.join('\n');
-          if (codeLang.toLowerCase() === 'mermaid') {
+          const fullCode = codeBuffer.join('\n');
+          const codeId = `code-${i}`;
+
+          if (codeLanguage === 'mermaid') {
             elements.push(
-              <div key={`mermaid-${index}`} className="my-3">
-                <div className="flex items-center justify-between px-3 py-1 bg-white/5 border border-white/10 rounded-t-lg text-xs text-indigo-400 font-mono">
-                  <span>Diagram (Mermaid)</span>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(codeText)}
-                    className="flex items-center space-x-1 hover:text-white"
-                  >
-                    <Copy size={12} />
-                    <span>Copy</span>
-                  </button>
-                </div>
-                <MermaidRenderer code={codeText} isDark={true} />
+              <div key={`mermaid-${i}`} className="my-4">
+                <MermaidRenderer code={fullCode} />
               </div>
             );
           } else {
             elements.push(
-              <div key={`code-${index}`} className="my-3 rounded-lg overflow-hidden border border-white/10 bg-[#161821]">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-white/5 border-b border-white/5 text-xs text-slate-400">
-                  <span className="font-mono text-[11px]">{codeLang || 'plaintext'}</span>
+              <div key={codeId} className="terminal-card my-4 relative group">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#e5e5e5] dark:border-[#2e2e2e]">
+                  <div className="terminal-traffic-lights">
+                    <div className="traffic-light traffic-red" />
+                    <div className="traffic-light traffic-yellow" />
+                    <div className="traffic-light traffic-green" />
+                    <span className="text-[11px] font-mono text-[#737373] dark:text-[#a3a3a3] ml-2">
+                      {codeLanguage}
+                    </span>
+                  </div>
                   <button
-                    onClick={() => navigator.clipboard.writeText(codeText)}
-                    className="flex items-center space-x-1 hover:text-white"
+                    onClick={() => {
+                      navigator.clipboard.writeText(fullCode);
+                      setCopiedCodeId(codeId);
+                      setTimeout(() => setCopiedCodeId(null), 1500);
+                    }}
+                    className="btn-pill btn-pill-sm text-[10px]"
                   >
-                    <Copy size={12} />
-                    <span>Copy</span>
+                    {copiedCodeId === codeId ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                    <span>{copiedCodeId === codeId ? 'Copied' : 'Copy'}</span>
                   </button>
                 </div>
-                <pre className="p-3 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
-                  <code>{codeText}</code>
+                <pre className="overflow-x-auto text-xs font-mono leading-relaxed text-black dark:text-white">
+                  <code>{fullCode}</code>
                 </pre>
               </div>
             );
           }
         }
-        return;
+        continue;
       }
 
       if (inCodeBlock) {
         codeBuffer.push(line);
-        return;
+        continue;
       }
 
-      // Checkboxes
-      if (/^\s*-\s*\[([ x])\]/.test(line)) {
-        const isChecked = /^\s*-\s*\[x\]/.test(line);
-        const taskText = line.replace(/^\s*-\s*\[([ x])\]\s*/, '');
+      // Headers
+      if (line.startsWith('# ')) {
         elements.push(
-          <div key={`todo-${index}`} className="flex items-start space-x-2.5 my-1.5 text-sm group">
+          <h1 key={i} className="font-heading text-2xl font-bold mt-6 mb-3 text-black dark:text-white">
+            {line.replace(/^# /, '')}
+          </h1>
+        );
+      } else if (line.startsWith('## ')) {
+        elements.push(
+          <h2 key={i} className="font-heading text-xl font-semibold mt-5 mb-2.5 text-black dark:text-white">
+            {line.replace(/^## /, '')}
+          </h2>
+        );
+      } else if (line.startsWith('### ')) {
+        elements.push(
+          <h3 key={i} className="font-heading text-lg font-semibold mt-4 mb-2 text-black dark:text-white">
+            {line.replace(/^### /, '')}
+          </h3>
+        );
+      }
+      // Horizontal Rule
+      else if (line.trim() === '---') {
+        elements.push(<hr key={i} className="my-6 border-[#e5e5e5] dark:border-[#2e2e2e]" />);
+      }
+      // Interactive Checkbox
+      else if (line.startsWith('- [ ] ') || line.startsWith('- [x] ')) {
+        const isChecked = line.startsWith('- [x] ');
+        const itemText = line.replace(/^- \[[ x]\] /, '');
+        elements.push(
+          <div key={i} className="flex items-center space-x-2.5 my-1.5 group">
             <input
               type="checkbox"
               checked={isChecked}
-              onChange={() => toggleCheckbox(index)}
-              className="mt-1 h-4 w-4 rounded border-slate-600 bg-white/5 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              onChange={() => handleToggleCheckbox(i)}
+              className="w-4 h-4 rounded border-[#d4d4d4] dark:border-[#404040] accent-black dark:accent-white cursor-pointer"
             />
-            <span className={isChecked ? 'line-through text-slate-500' : 'text-slate-200'}>
-              {renderInlineSpans(taskText)}
+            <span className={`text-[14px] leading-relaxed transition-all ${isChecked ? 'line-through text-[#a3a3a3]' : 'text-black dark:text-white'}`}>
+              {renderInlineSpans(itemText)}
             </span>
           </div>
         );
-        return;
       }
-
-      // Callouts (> ℹ️, > ⚠️, > 💡, > )
-      if (line.startsWith('>')) {
-        const calloutText = line.replace(/^>\s*/, '');
-        let calloutType = 'info';
-        let Icon = Info;
-        let borderColor = 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300';
-
-        if (calloutText.includes('⚠️') || calloutText.toLowerCase().includes('warning')) {
-          Icon = AlertTriangle;
-          borderColor = 'border-amber-500/30 bg-amber-500/10 text-amber-300';
-        } else if (calloutText.includes('💡') || calloutText.toLowerCase().includes('tip')) {
-          Icon = Lightbulb;
-          borderColor = 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
-        }
-
+      // Bullet items
+      else if (line.startsWith('- ')) {
         elements.push(
-          <div key={`callout-${index}`} className={`my-3 p-3 rounded-lg border flex items-start space-x-3 text-sm ${borderColor}`}>
-            <Icon size={18} className="shrink-0 mt-0.5" />
-            <div className="leading-relaxed text-slate-200">{renderInlineSpans(calloutText)}</div>
+          <li key={i} className="ml-5 list-disc text-[14px] leading-relaxed my-1 text-black dark:text-white">
+            {renderInlineSpans(line.replace(/^- /, ''))}
+          </li>
+        );
+      }
+      // Callout box
+      else if (line.startsWith('> [!NOTE]') || line.startsWith('> [!TIP]') || line.startsWith('> [!WARNING]')) {
+        const type = line.includes('WARNING') ? 'warning' : line.includes('TIP') ? 'tip' : 'note';
+        elements.push(
+          <div 
+            key={i} 
+            className={`my-3 p-3.5 rounded-xl border border-l-4 text-xs leading-relaxed ${
+              type === 'warning'
+                ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 border-l-amber-500 text-amber-900 dark:text-amber-200'
+                : 'bg-[#fafafa] dark:bg-[#1e1e1e] border-[#e5e5e5] dark:border-[#2e2e2e] border-l-black dark:border-l-white text-black dark:text-white'
+            }`}
+          >
+            <div className="font-semibold uppercase tracking-wider text-[10px] mb-1 flex items-center gap-1.5">
+              {type === 'warning' ? <AlertTriangle size={12} /> : <Info size={12} />}
+              <span>{type}</span>
+            </div>
+            <div>{renderInlineSpans(lines[i + 1]?.replace(/^>\s*/, '') || '')}</div>
           </div>
         );
-        return;
+        i++; // skip next line as part of callout
       }
-
-      // Headings
-      if (line.startsWith('# ')) {
-        elements.push(<h1 key={`h1-${index}`} className="text-2xl font-bold mt-6 mb-2 text-white">{renderInlineSpans(line.slice(2))}</h1>);
-        return;
-      }
-      if (line.startsWith('## ')) {
-        elements.push(<h2 key={`h2-${index}`} className="text-xl font-bold mt-5 mb-2 text-slate-100">{renderInlineSpans(line.slice(3))}</h2>);
-        return;
-      }
-      if (line.startsWith('### ')) {
-        elements.push(<h3 key={`h3-${index}`} className="text-base font-semibold mt-4 mb-1.5 text-slate-200">{renderInlineSpans(line.slice(4))}</h3>);
-        return;
-      }
-
-      // Bullet lists
-      if (line.startsWith('- ')) {
+      // Standard Paragraph
+      else if (line.trim().length > 0) {
         elements.push(
-          <div key={`ul-${index}`} className="flex items-start space-x-2 my-1 text-sm text-slate-200 pl-2">
-            <span className="text-indigo-400 font-bold">•</span>
-            <span>{renderInlineSpans(line.slice(2))}</span>
-          </div>
+          <p key={i} className="text-[14px] leading-relaxed my-2 text-[#525252] dark:text-[#d4d4d4]">
+            {renderInlineSpans(line)}
+          </p>
         );
-        return;
       }
-
-      // Horizontal rule
-      if (line.trim() === '---') {
-        elements.push(<hr key={`hr-${index}`} className="my-4 border-white/10" />);
-        return;
-      }
-
-      // Blank line
-      if (line.trim() === '') {
-        elements.push(<div key={`blank-${index}`} className="h-2" />);
-        return;
-      }
-
-      // Standard paragraph
-      elements.push(
-        <p key={`p-${index}`} className="text-sm text-slate-300 my-1.5 leading-relaxed">
-          {renderInlineSpans(line)}
-        </p>
-      );
-    });
+    }
 
     return elements;
   };
 
-  // Parses inline Wikilinks [[Page]], bold, italic, code
-  const renderInlineSpans = (text: string) => {
-    const parts = text.split(/(\[\[.*?\]\]|\*\*.*?\*\*|\*.*?\*|`.*?`)/g);
+  // Parses inline `[[Wikilinks]]`, `**bold**`, `*italic*`, and `` `code` ``
+  const renderInlineSpans = (text: string): React.ReactNode => {
+    const parts = text.split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|`[^`]+`)/g);
 
-    return parts.map((part, i) => {
+    return parts.map((part, idx) => {
       // Wikilink
       if (part.startsWith('[[') && part.endsWith(']]')) {
-        const linkTitle = part.slice(2, -2).trim();
+        const linkTarget = part.slice(2, -2).trim();
         return (
-          <span
-            key={i}
-            onClick={() => onNavigateToPage(linkTitle)}
-            className="inline-flex items-center space-x-0.5 text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 px-1.5 py-0.5 rounded cursor-pointer transition-colors border border-indigo-500/20 font-medium"
+          <button
+            key={idx}
+            onClick={() => onNavigateToPage(linkTarget)}
+            className="inline-flex items-center gap-1 font-medium text-black dark:text-white underline decoration-[#a3a3a3] hover:decoration-black dark:hover:decoration-white transition-all cursor-pointer mx-0.5"
+            title={`Jump to note: ${linkTarget}`}
           >
-            <span>{linkTitle}</span>
-            <ExternalLink size={10} className="ml-0.5 opacity-60" />
-          </span>
+            <span>{linkTarget}</span>
+          </button>
         );
       }
+
       // Bold
       if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+        return <strong key={idx} className="font-semibold text-black dark:text-white">{part.slice(2, -2)}</strong>;
       }
-      // Italic
-      if (part.startsWith('*') && part.endsWith('*')) {
-        return <em key={i} className="italic text-slate-200">{part.slice(1, -1)}</em>;
-      }
-      // Inline Code
+
+      // Inline code
       if (part.startsWith('`') && part.endsWith('`')) {
         return (
-          <code key={i} className="px-1 py-0.5 rounded bg-white/10 text-pink-300 font-mono text-xs">
+          <code key={idx} className="font-mono text-xs px-1.5 py-0.5 rounded bg-[#f5f5f5] dark:bg-[#222222] border border-[#e5e5e5] dark:border-[#333] text-black dark:text-white mx-0.5">
             {part.slice(1, -1)}
           </code>
         );
       }
+
       return part;
     });
   };
 
   return (
-    <div className="flex-1 h-full flex flex-col bg-[#0e0f12] overflow-hidden select-text relative">
-      {/* Editor Header Toolbar */}
-      <div className="h-10 border-b border-white/5 px-6 flex items-center justify-between text-xs text-slate-400 bg-[#121318]/50">
-        <div className="flex items-center space-x-3">
-          <span className="flex items-center space-x-1.5 font-medium">
-            <span className={`w-2 h-2 rounded-full ${saveStatus === 'saving' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
-            <span>{saveStatus === 'saving' ? 'Saving...' : 'Saved to local workspace'}</span>
-          </span>
-          <span className="text-slate-600">|</span>
-          <span>{content.trim().split(/\s+/).filter(Boolean).length} words</span>
-          <span>•</span>
-          <span>{content.length} characters</span>
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#171717] select-text transition-colors">
+      {/* Document Top Bar & Metadata */}
+      <div className="h-12 border-b border-[#e5e5e5] dark:border-[#262626] px-6 flex items-center justify-between select-none">
+        {/* Left: Editor View Mode Switcher Pills */}
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1 p-0.5 rounded-full border border-[#e5e5e5] dark:border-[#2e2e2e] bg-[#fafafa] dark:bg-[#1f1f1f]">
+            <button
+              onClick={() => setEditorMode('visual')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                editorMode === 'visual'
+                  ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                  : 'text-[#737373] dark:text-[#a3a3a3] hover:text-black dark:hover:text-white'
+              }`}
+            >
+              Write
+            </button>
+            <button
+              onClick={() => setEditorMode('split')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                editorMode === 'split'
+                  ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                  : 'text-[#737373] dark:text-[#a3a3a3] hover:text-black dark:hover:text-white'
+              }`}
+            >
+              Split
+            </button>
+            <button
+              onClick={() => setEditorMode('read')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                editorMode === 'read'
+                  ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                  : 'text-[#737373] dark:text-[#a3a3a3] hover:text-black dark:hover:text-white'
+              }`}
+            >
+              Preview
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-2 text-[11px] text-[#737373] dark:text-[#a3a3a3] font-mono ml-2">
+            <span className={`inline-block w-2 h-2 rounded-full ${saveStatus === 'saved' ? 'bg-emerald-500' : 'bg-amber-400 animate-pulse'}`} />
+            <span>{saveStatus === 'saved' ? 'Saved' : 'Autosaving...'}</span>
+          </div>
         </div>
 
-        {/* Mode Selector */}
-        <div className="flex items-center bg-[#1a1b23] p-0.5 rounded-lg border border-white/5">
+        {/* Right: Word Count, AI Assist & Export Actions */}
+        <div className="flex items-center space-x-2">
+          <div className="hidden sm:flex items-center space-x-2 font-mono text-[11px] text-[#737373] dark:text-[#a3a3a3] mr-2">
+            <span>{wordCount} words</span>
+            <span>·</span>
+            <span>~{readingTime} min read</span>
+          </div>
+
           <button
-            onClick={() => setEditorMode('visual')}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded ${
-              editorMode === 'visual' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="Interactive Visual Editor"
+            onClick={() => {
+              navigator.clipboard.writeText(content);
+              alert('Markdown content copied to clipboard.');
+            }}
+            className="btn-pill btn-pill-sm"
+            title="Copy Raw Markdown"
           >
-            <Edit3 size={12} />
-            <span>Edit</span>
+            <Copy size={11} />
+            <span className="hidden sm:inline">Copy</span>
           </button>
+
           <button
-            onClick={() => setEditorMode('split')}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded ${
-              editorMode === 'split' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="Side-by-side Markdown & Preview"
+            onClick={() => {
+              const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${title.replace(/\s+/g, '-').toLowerCase() || 'note'}.md`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="btn-pill btn-pill-sm"
+            title="Download .md file"
           >
-            <Columns size={12} />
-            <span>Split</span>
-          </button>
-          <button
-            onClick={() => setEditorMode('read')}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded ${
-              editorMode === 'read' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="Clean Reading Mode"
-          >
-            <Eye size={12} />
-            <span>Read</span>
+            <Download size={11} />
+            <span className="hidden sm:inline">Export</span>
           </button>
         </div>
       </div>
 
-      {/* Floating Text Selection AI Toolbar */}
-      {selectionToolbarPos && selectedText && (
-        <div
-          className="absolute z-50 bg-[#1e2029] border border-indigo-500/40 rounded-lg shadow-2xl p-1 flex items-center space-x-1 animate-fade-in text-xs"
-          style={{ top: `${selectionToolbarPos.top}px`, left: `${selectionToolbarPos.left}px` }}
-        >
-          <div className="flex items-center space-x-1 px-2 py-1 text-indigo-400 font-semibold border-r border-white/10">
-            <Sparkles size={13} className="animate-pulse" />
-            <span>Mindora AI</span>
-          </div>
-          <button
-            onClick={() => onRequestAiInline('improve', selectedText)}
-            className="px-2 py-1 hover:bg-white/10 rounded text-slate-200 transition-colors"
-          >
-            Improve
-          </button>
-          <button
-            onClick={() => onRequestAiInline('summarize', selectedText)}
-            className="px-2 py-1 hover:bg-white/10 rounded text-slate-200 transition-colors"
-          >
-            Summarize
-          </button>
-          <button
-            onClick={() => onRequestAiInline('tasks', selectedText)}
-            className="px-2 py-1 hover:bg-white/10 rounded text-slate-200 transition-colors"
-          >
-            Extract Tasks
-          </button>
-          <button
-            onClick={() => onRequestAiInline('explain', selectedText)}
-            className="px-2 py-1 hover:bg-white/10 rounded text-slate-200 transition-colors"
-          >
-            Explain
-          </button>
-        </div>
-      )}
-
-      {/* Slash Command Palette Menu */}
-      {slashMenuOpen && (
-        <div
-          className="absolute z-50 w-64 bg-[#1e2029] border border-white/10 rounded-lg shadow-2xl p-1 animate-fade-in text-xs"
-          style={{ top: `${slashMenuPos.top}px`, left: `${slashMenuPos.left}px` }}
-        >
-          <div className="px-2 py-1 text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-            Insert Block
-          </div>
-          <button
-            onClick={() => executeSlashCommand('# ')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Heading1 size={14} className="text-indigo-400" />
-            <span>Heading 1</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('## ')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Heading2 size={14} className="text-indigo-400" />
-            <span>Heading 2</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('### ')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Heading3 size={14} className="text-indigo-400" />
-            <span>Heading 3</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('- [ ] ')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <CheckSquare size={14} className="text-emerald-400" />
-            <span>Checklist / Todo</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('> ')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Quote size={14} className="text-amber-400" />
-            <span>Quote / Callout</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('```ts\n\n```')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Code size={14} className="text-pink-400" />
-            <span>Code Block</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('| Column 1 | Column 2 |\n|---|---|\n| Item 1 | Item 2 |')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <Table size={14} className="text-sky-400" />
-            <span>Table</span>
-          </button>
-          <button
-            onClick={() => executeSlashCommand('$$\nE = mc^2\n$$')}
-            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left"
-          >
-            <span className="font-mono text-xs text-purple-400 font-bold">fx</span>
-            <span>Math LaTeX Equation</span>
-          </button>
-        </div>
-      )}
-
-      {/* Wikilink Auto-Complete Popup */}
-      {wikilinkMenuOpen && (
-        <div
-          className="absolute z-50 w-72 bg-[#1e2029] border border-indigo-500/30 rounded-lg shadow-2xl p-1 animate-fade-in text-xs top-28 left-48"
-        >
-          <div className="px-2 py-1 text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
-            Link to Workspace Document
-          </div>
-          {filteredWikilinkSuggestions.length === 0 ? (
-            <div className="px-2 py-2 text-slate-500 italic">No matching pages found</div>
-          ) : (
-            filteredWikilinkSuggestions.slice(0, 5).map((p) => (
-              <button
-                key={p.id}
-                onClick={() => insertWikilink(p.title)}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded hover:bg-white/10 text-slate-200 text-left truncate"
-              >
-                <span>{p.icon || '📄'}</span>
-                <span className="truncate">{p.title}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Main Document Content Area */}
-      <div className="flex-1 overflow-y-auto px-10 py-8 max-w-4xl w-full mx-auto">
-        {/* Document Icon & Title */}
-        <div className="mb-6">
-          <div className="text-3xl mb-2 cursor-pointer">{page.icon || '📄'}</div>
+      {/* Main Document Body */}
+      <div className="flex-1 overflow-y-auto px-6 md:px-16 py-8 max-w-4xl mx-auto w-full">
+        {/* Document Title Header */}
+        <div className="mb-4">
           <input
             type="text"
             value={title}
             onChange={handleTitleChange}
-            placeholder="Untitled Document"
-            className="w-full text-3xl font-extrabold bg-transparent border-none text-white focus:outline-none placeholder:text-slate-600 tracking-tight"
+            placeholder="Untitled Note"
+            className="w-full bg-transparent font-heading text-3xl font-bold tracking-tight text-black dark:text-white focus:outline-none placeholder:text-[#a3a3a3]"
           />
         </div>
 
-        {/* View Layouts */}
+        {/* Tags Bar */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-6">
+          {(page.tags || []).map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs bg-[#fafafa] dark:bg-[#222222] border border-[#e5e5e5] dark:border-[#333] text-[#525252] dark:text-[#d4d4d4]"
+            >
+              <span>#{tag}</span>
+              <button
+                onClick={() => handleRemoveTag(tag)}
+                className="hover:text-red-500"
+              >
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+
+          {newTagInputOpen ? (
+            <div className="inline-flex items-center gap-1">
+              <input
+                type="text"
+                autoFocus
+                placeholder="tag name"
+                value={newTagText}
+                onChange={(e) => setNewTagText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddTag();
+                  if (e.key === 'Escape') setNewTagInputOpen(false);
+                }}
+                className="px-2 py-0.5 text-xs rounded-full border border-black dark:border-white bg-transparent text-black dark:text-white focus:outline-none w-24"
+              />
+              <button onClick={handleAddTag} className="btn-pill btn-pill-sm">
+                Add
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setNewTagInputOpen(true)}
+              className="btn-pill btn-pill-sm text-[11px]"
+            >
+              <Plus size={10} />
+              <span>Tag</span>
+            </button>
+          )}
+
+          {/* Quick AI Action Pills */}
+          <div className="ml-auto hidden md:flex items-center space-x-1.5">
+            <button
+              disabled={isAiProcessing}
+              onClick={() => handleAiAction('improve')}
+              className="btn-pill btn-pill-sm text-[11px] hover:border-black dark:hover:border-white"
+              title="Polish writing clarity and flow"
+            >
+              <Sparkles size={11} />
+              <span>{isAiProcessing ? 'Thinking...' : 'Polish'}</span>
+            </button>
+            <button
+              disabled={isAiProcessing}
+              onClick={() => handleAiAction('summarize')}
+              className="btn-pill btn-pill-sm text-[11px]"
+              title="Summarize key points"
+            >
+              Summarize
+            </button>
+            <button
+              disabled={isAiProcessing}
+              onClick={() => handleAiAction('tasks')}
+              className="btn-pill btn-pill-sm text-[11px]"
+              title="Extract tasks to checklists"
+            >
+              Tasks
+            </button>
+          </div>
+        </div>
+
+        {/* Editor Writing Surface */}
         {editorMode === 'visual' && (
-          <div className="space-y-4">
+          <div className="space-y-6 relative">
             <textarea
               ref={textareaRef}
               value={content}
               onChange={handleContentChange}
-              onSelect={handleSelectText}
-              placeholder="Type '/' for slash commands, '[[' for document links, or start writing..."
-              className="w-full min-h-[350px] bg-transparent border-none text-slate-200 focus:outline-none resize-none font-sans text-sm leading-relaxed placeholder:text-slate-600"
+              placeholder="Type '/' for commands, '[[' to link notes, or write in Markdown..."
+              className="w-full min-h-[420px] bg-transparent text-black dark:text-white font-sans text-[15px] leading-relaxed resize-none focus:outline-none placeholder:text-[#a3a3a3]"
             />
-            <div className="border-t border-white/5 pt-6 mt-6">
-              <div className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-3">
-                Live Interactive Preview
+
+            {/* Live Rendered Preview Section */}
+            <div className="pt-6 border-t border-[#e5e5e5] dark:border-[#262626]">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-[#737373] dark:text-[#a3a3a3] mb-3">
+                Live Interactive View
               </div>
-              <div className="bg-[#121318] p-5 rounded-xl border border-white/5">
+              <div className="p-6 rounded-2xl border border-[#e5e5e5] dark:border-[#262626] bg-[#fafafa] dark:bg-[#1a1a1a]">
                 {renderInteractiveMarkdown(content)}
               </div>
             </div>
@@ -594,45 +608,100 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         )}
 
         {editorMode === 'split' && (
-          <div className="grid grid-cols-2 gap-6 min-h-[450px]">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 min-h-[500px] relative">
             <textarea
               ref={textareaRef}
               value={content}
               onChange={handleContentChange}
-              onSelect={handleSelectText}
               placeholder="Write Markdown..."
-              className="w-full h-full bg-[#121318] p-4 rounded-xl border border-white/5 text-slate-200 focus:outline-none resize-none font-mono text-xs leading-relaxed"
+              className="w-full h-full p-4 rounded-xl border border-[#e5e5e5] dark:border-[#262626] bg-transparent text-black dark:text-white font-mono text-xs leading-relaxed resize-none focus:outline-none"
             />
-            <div className="bg-[#121318] p-4 rounded-xl border border-white/5 overflow-y-auto">
+            <div className="p-4 rounded-xl border border-[#e5e5e5] dark:border-[#262626] bg-[#fafafa] dark:bg-[#1a1a1a] overflow-y-auto max-h-[650px]">
               {renderInteractiveMarkdown(content)}
             </div>
           </div>
         )}
 
         {editorMode === 'read' && (
-          <div className="prose prose-invert max-w-none">
+          <div className="py-4 leading-relaxed">
             {renderInteractiveMarkdown(content)}
           </div>
         )}
 
-        {/* Backlinks Section */}
+        {/* Slash Command Popover Menu */}
+        {slashMenuOpen && (
+          <div className="absolute left-16 top-64 bg-white dark:bg-[#222222] border border-[#e5e5e5] dark:border-[#333] rounded-2xl shadow-xl p-2 w-64 z-50 animate-fade-in">
+            <div className="text-[10px] uppercase font-mono tracking-wider text-[#737373] dark:text-[#a3a3a3] px-2.5 py-1">
+              Insert Block
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-0.5">
+              {filteredSlashCommands.map((cmd) => {
+                const IconComponent = cmd.icon;
+                return (
+                  <button
+                    key={cmd.title}
+                    onClick={cmd.action}
+                    className="w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg text-left hover:bg-[#f5f5f5] dark:hover:bg-[#2a2a2a] text-black dark:text-white transition-colors"
+                  >
+                    <IconComponent size={14} className="text-[#737373] flex-shrink-0" />
+                    <div className="truncate">
+                      <div className="font-medium text-xs truncate">{cmd.title}</div>
+                      <div className="text-[10px] text-[#737373] truncate">{cmd.desc}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Wikilink Auto-suggest Popover */}
+        {wikilinkMenuOpen && (
+          <div className="absolute left-20 top-72 bg-white dark:bg-[#222222] border border-[#e5e5e5] dark:border-[#333] rounded-2xl shadow-xl p-2 w-72 z-50 animate-fade-in">
+            <div className="text-[10px] uppercase font-mono tracking-wider text-[#737373] dark:text-[#a3a3a3] px-2.5 py-1">
+              Link to Note
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-0.5">
+              {filteredWikilinkPages.length > 0 ? (
+                filteredWikilinkPages.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      insertTextAtCursor(`${p.title}]]`, false);
+                    }}
+                    className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-[#f5f5f5] dark:hover:bg-[#2a2a2a] text-black dark:text-white transition-colors"
+                  >
+                    <span>{p.icon || '📄'}</span>
+                    <span className="font-medium text-xs truncate flex-1">{p.title}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-2.5 py-2 text-xs text-[#737373]">
+                  No matching notes. Press Space or Esc.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Linked Backlinks Section */}
         {backlinks.length > 0 && (
-          <div className="mt-12 pt-6 border-t border-white/5">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center space-x-1.5">
-              <span>Backlinks to this note ({backlinks.length})</span>
+          <div className="mt-12 pt-6 border-t border-[#e5e5e5] dark:border-[#262626]">
+            <div className="font-mono text-[11px] uppercase tracking-wider text-[#737373] dark:text-[#a3a3a3] mb-3">
+              Linked Backlinks ({backlinks.length})
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {backlinks.map((bl) => (
                 <div
                   key={bl.id}
                   onClick={() => onNavigateToPage(bl.title)}
-                  className="p-3 rounded-lg bg-[#14161f] border border-white/5 hover:border-indigo-500/30 cursor-pointer transition-all group"
+                  className="p-3.5 rounded-xl border border-[#e5e5e5] dark:border-[#262626] bg-[#fafafa] dark:bg-[#1a1a1a] hover:border-black dark:hover:border-white cursor-pointer transition-all group"
                 >
-                  <div className="flex items-center space-x-1.5 text-xs font-semibold text-indigo-400 group-hover:text-indigo-300">
-                    <ArrowRight size={12} />
+                  <div className="flex items-center space-x-1.5 text-xs text-black dark:text-white font-medium group-hover:underline">
+                    <ArrowRight size={12} className="text-[#737373]" />
                     <span>{bl.title}</span>
                   </div>
-                  <div className="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                  <div className="text-[11px] text-[#737373] dark:text-[#a3a3a3] mt-1 line-clamp-2">
                     {bl.excerpt}
                   </div>
                 </div>
@@ -640,21 +709,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
             </div>
           </div>
         )}
-        {/* Document Stats Footer */}
-        <div className="mt-8 pt-4 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-          <div className="flex items-center space-x-3">
-            <span>{content.trim().split(/\s+/).filter(Boolean).length} words</span>
-            <span>•</span>
-            <span>~{Math.max(1, Math.ceil(content.trim().split(/\s+/).filter(Boolean).length / 200))} min read</span>
-            <span>•</span>
-            <span>{content.length} characters</span>
-          </div>
-          <div className="text-slate-600">
-            Markdown v2.0
-          </div>
-        </div>
       </div>
     </div>
   );
 };
-

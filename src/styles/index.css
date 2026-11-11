@@ -4,23 +4,203 @@
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
-    --font-serif: 'Newsreader', Georgia, serif;
+    --canvas: #ffffff;
+    --surface-soft: #fafafa;
+    --surface-card: #ffffff;
+    --hairline: #e5e5e5;
+    --hairline-strong: #d4d4d4;
+    --ink: #000000;
+    --charcoal: #525252;
+    --body: #737373;
+    --mute: #a3a3a3;
+    --primary: #000000;
+    --on-primary: #ffffff;
+    --font-heading: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .dark {
+    --canvas: #171717;
+    --surface-soft: #1f1f1f;
+    --surface-card: #1c1c1c;
+    --hairline: #2e2e2e;
+    --hairline-strong: #3f3f3f;
+    --ink: #ffffff;
+    --charcoal: #d4d4d4;
+    --body: #a3a3a3;
+    --mute: #737373;
+    --primary: #ffffff;
+    --on-primary: #000000;
   }
 
   body {
+    background-color: var(--canvas);
+    color: var(--ink);
     font-family: var(--font-sans);
     margin: 0;
     padding: 0;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: rgba(0, 0, 0, 0.08);
+    color: var(--ink);
+  }
+
+  .dark ::selection {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
   }
 }
 
-/* Custom Scrollbars */
+/* Headings: SF Pro Rounded / Nunito feel */
+h1, h2, h3, h4, .font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.01em;
+}
+
+/* Ollama Signature Pill Button */
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  border: 1px solid var(--hairline);
+  background-color: var(--canvas);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 16px;
+  height: 34px;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn-pill:hover {
+  border-color: var(--ink);
+  background-color: var(--surface-soft);
+}
+
+.btn-pill-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  border: 1px solid var(--primary);
+  background-color: var(--primary);
+  color: var(--on-primary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 18px;
+  height: 34px;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn-pill-primary:hover {
+  opacity: 0.92;
+  transform: translateY(-0.5px);
+}
+
+.btn-pill-sm {
+  font-size: 11px;
+  padding: 3px 10px;
+  height: 26px;
+  gap: 4px;
+}
+
+.btn-pill-active {
+  background-color: var(--ink) !important;
+  color: var(--canvas) !important;
+  border-color: var(--ink) !important;
+}
+
+/* Ollama Search Pill */
+.search-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--hairline);
+  background-color: var(--surface-soft);
+  color: var(--charcoal);
+  font-size: 13px;
+  padding: 6px 14px;
+  height: 34px;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+
+.search-pill:hover,
+.search-pill:focus-within {
+  border-color: var(--hairline-strong);
+  background-color: var(--canvas);
+  color: var(--ink);
+}
+
+/* Ollama Code Install / Command Snippet */
+.install-snippet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--hairline);
+  background-color: var(--surface-soft);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 18px;
+}
+
+/* Ollama Terminal Card */
+.terminal-card {
+  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  background-color: var(--surface-card);
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.terminal-traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.traffic-light {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+}
+
+.traffic-red { background-color: #ff5f56; }
+.traffic-yellow { background-color: #ffbd2e; }
+.traffic-green { background-color: #27c93f; }
+
+/* Hairline utility borders */
+.border-hairline {
+  border-color: var(--hairline);
+}
+
+.border-hairline-strong {
+  border-color: var(--hairline-strong);
+}
+
+/* Minimalist Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -28,21 +208,20 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(120, 120, 120, 0.2);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(120, 120, 120, 0.4);
 }
 
-/* Animation utilities */
+/* Clean animation */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
   animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-

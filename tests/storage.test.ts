@@ -75,5 +75,31 @@ This is imported from Obsidian with [[Welcome to Mindora]] link.
     expect(Array.isArray(parsed.pages)).toBe(true);
     expect(Array.isArray(parsed.databases)).toBe(true);
   });
+
+  it('guarantees zero secret API key leakage in exports and general storage state', () => {
+    storage.updateAISettings({
+      apiKey: 'secret-test-key-12345',
+      persistKey: false,
+    });
+
+    // 1. Export workspace bundle must NOT contain the secret key
+    const exportedJson = storage.exportWorkspaceData();
+    expect(exportedJson).not.toContain('secret-test-key-12345');
+
+    // 2. Local storage state must NOT contain the secret key
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('mindora_v1_state');
+      if (stored) {
+        expect(stored).not.toContain('secret-test-key-12345');
+      }
+    }
+
+    // 3. AISettings returns the key for authorized active app runtime
+    const settings = storage.getAISettings();
+    expect(settings.apiKey).toBe('secret-test-key-12345');
+
+    // Cleanup
+    storage.updateAISettings({ apiKey: '' });
+  });
 });
 

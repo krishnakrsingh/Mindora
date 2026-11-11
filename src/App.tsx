@@ -33,7 +33,16 @@ export const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
+
+  // Sync dark mode class on document element
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
 
   // Global keyboard shortcuts (Cmd+K for search, Cmd+/ for shortcuts)
   useEffect(() => {
@@ -70,6 +79,11 @@ export const App: React.FC = () => {
     );
     if (page) {
       setActivePageId(page.id);
+      setViewMode('doc');
+    } else {
+      // Create note if referenced link does not exist yet
+      const created = storage.createPage(titleOrId.trim());
+      setActivePageId(created.id);
       setViewMode('doc');
     }
   };
@@ -143,7 +157,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className={`w-screen h-screen flex flex-col overflow-hidden bg-[#0e0f12] text-slate-100 ${darkMode ? 'dark' : ''}`}>
+    <div className={`w-screen h-screen flex flex-col overflow-hidden bg-white dark:bg-[#171717] text-black dark:text-white ${darkMode ? 'dark' : ''} transition-colors`}>
       {/* Universal Top Header */}
       <Header
         viewMode={viewMode}
@@ -156,6 +170,7 @@ export const App: React.FC = () => {
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
+        onNewNote={() => handleCreatePage(null)}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
       />
@@ -277,4 +292,3 @@ export const App: React.FC = () => {
     </div>
   );
 };
-

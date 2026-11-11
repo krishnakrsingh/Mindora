@@ -8,8 +8,9 @@ import {
   RotateCcw, 
   Trash2, 
   ExternalLink,
-  Layers,
-  Sparkles
+  Layout,
+  Share2,
+  X
 } from 'lucide-react';
 import { CanvasBoard, CanvasNode, CanvasEdge } from '../../types';
 import { storage } from '../../services/storage';
@@ -35,7 +36,6 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const lastPanPos = useRef({ x: 0, y: 0 });
 
-  // Pan canvas
   const handleMouseDownContainer = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.canvas-card')) return;
     setIsPanning(true);
@@ -71,7 +71,6 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
     setDraggingNodeId(null);
   };
 
-  // Node drag start
   const handleNodeMouseDown = (node: CanvasNode, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedNodeId(node.id);
@@ -82,7 +81,6 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
     });
   };
 
-  // Add new card
   const handleAddCard = (type: 'card' | 'sticky' | 'page') => {
     const pages = storage.getPages();
     const firstPage = pages[0];
@@ -91,70 +89,29 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
       id: `node-${Date.now()}`,
       boardId: canvas.id,
       type,
-      title: type === 'page' ? (firstPage?.title || 'Linked Note') : type === 'sticky' ? 'Quick Thought' : 'Architecture Component',
-      content: type === 'sticky' ? 'Double click or edit thoughts here.' : 'Modular component description.',
+      title: type === 'page' ? (firstPage?.title || 'Linked Note') : type === 'sticky' ? 'Quick Note' : 'System Module',
+      content: type === 'sticky' ? 'Record thoughts here.' : 'Modular architecture node.',
       pageId: type === 'page' ? firstPage?.id : undefined,
-      x: Math.round((-pan.x + 300) / zoom + Math.random() * 80),
-      y: Math.round((-pan.y + 200) / zoom + Math.random() * 80),
-      width: 240,
-      height: 120,
-      color: type === 'sticky' ? '#CA8A04' : type === 'page' ? '#0284C7' : '#4F46E5',
+      x: Math.round((-pan.x + 300) / zoom + Math.random() * 60),
+      y: Math.round((-pan.y + 200) / zoom + Math.random() * 60),
+      width: 250,
+      height: 130,
+      color: type === 'sticky' ? '#fef08a' : '#ffffff',
     };
 
     onUpdateCanvas({ nodes: [...canvas.nodes, newNode] });
   };
 
-  // Delete node
-  const handleDeleteNode = (nodeId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newNodes = canvas.nodes.filter((n) => n.id !== nodeId);
-    const newEdges = canvas.edges.filter((ed) => ed.fromId !== nodeId && ed.toId !== nodeId);
-    onUpdateCanvas({ nodes: newNodes, edges: newEdges });
+  const handleDeleteNode = (nodeId: string) => {
+    const updatedNodes = canvas.nodes.filter((n) => n.id !== nodeId);
+    const updatedEdges = canvas.edges.filter((e) => e.fromId !== nodeId && e.toId !== nodeId);
+    onUpdateCanvas({ nodes: updatedNodes, edges: updatedEdges });
+    if (selectedNodeId === nodeId) setSelectedNodeId(null);
   };
 
-  // Render SVG edge lines
-  const renderEdges = () => {
-    return canvas.edges.map((edge) => {
-      const fromNode = canvas.nodes.find((n) => n.id === edge.fromId);
-      const toNode = canvas.nodes.find((n) => n.id === edge.toId);
-      if (!fromNode || !toNode) return null;
-
-      const x1 = fromNode.x + fromNode.width / 2;
-      const y1 = fromNode.y + fromNode.height / 2;
-      const x2 = toNode.x + toNode.width / 2;
-      const y2 = toNode.y + toNode.height / 2;
-
-      const midX = (x1 + x2) / 2;
-      const midY = (y1 + y2) / 2;
-      const path = `M ${x1} ${y1} Q ${midX} ${midY - 20} ${x2} ${y2}`;
-
-      return (
-        <g key={edge.id}>
-          <path
-            d={path}
-            stroke="#818CF8"
-            strokeWidth="2"
-            fill="none"
-            markerEnd="url(#canvas-arrow)"
-            strokeDasharray={edge.style === 'dashed' ? '5,5' : 'none'}
-            opacity="0.7"
-          />
-          {edge.label && (
-            <text
-              x={midX}
-              y={midY - 15}
-              fill="#CBD5E1"
-              fontSize="10"
-              fontFamily="Plus Jakarta Sans"
-              textAnchor="middle"
-              className="bg-[#121318] px-1 select-none"
-            >
-              {edge.label}
-            </text>
-          )}
-        </g>
-      );
-    });
+  const handleUpdateNodeContent = (nodeId: string, updates: Partial<CanvasNode>) => {
+    const updatedNodes = canvas.nodes.map((n) => (n.id === nodeId ? { ...n, ...updates } : n));
+    onUpdateCanvas({ nodes: updatedNodes });
   };
 
   return (
@@ -163,139 +120,180 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
       onMouseDown={handleMouseDownContainer}
       onMouseMove={handleMouseMoveContainer}
       onMouseUp={handleMouseUpContainer}
-      className="flex-1 h-full bg-[#0b0c10] overflow-hidden relative select-none cursor-grab active:cursor-grabbing"
-      style={{
-        backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px)',
-        backgroundSize: '24px 24px',
-      }}
+      className="flex-1 w-full h-full relative overflow-hidden bg-[#fafafa] dark:bg-[#141414] select-none cursor-grab active:cursor-grabbing transition-colors"
     >
-      <svg className="absolute inset-0 pointer-events-none w-0 h-0">
-        <defs>
-          <marker id="canvas-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#818CF8" />
-          </marker>
-        </defs>
-      </svg>
-      {/* Canvas Top Bar */}
-      <div className="absolute top-4 left-4 z-20 flex items-center space-x-2 bg-[#161822]/90 backdrop-blur-md p-1.5 rounded-xl border border-white/10 shadow-xl text-xs">
-        <div className="flex items-center space-x-1.5 px-2 py-1 bg-white/5 rounded-lg text-slate-300 font-semibold">
-          <span>🗺️</span>
-          <span>{canvas.title}</span>
-        </div>
-
+      {/* Top Floating Pill Toolbar */}
+      <div className="absolute top-4 left-6 flex items-center space-x-2 z-20 pointer-events-auto">
         <button
           onClick={() => handleAddCard('card')}
-          className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-sm transition-colors"
+          className="btn-pill btn-pill-sm shadow-sm"
         >
-          <Plus size={13} />
-          <span>Add Block</span>
+          <Plus size={11} />
+          <span>Card</span>
         </button>
 
         <button
           onClick={() => handleAddCard('sticky')}
-          className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-medium shadow-sm transition-colors"
+          className="btn-pill btn-pill-sm shadow-sm"
         >
-          <StickyNote size={13} />
-          <span>Sticky Note</span>
+          <StickyNote size={11} />
+          <span>Sticky</span>
         </button>
 
         <button
           onClick={() => handleAddCard('page')}
-          className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium shadow-sm transition-colors"
+          className="btn-pill btn-pill-sm shadow-sm"
         >
-          <FileText size={13} />
-          <span>Link Document</span>
+          <FileText size={11} />
+          <span>Doc Link</span>
         </button>
-      </div>
 
-      {/* Canvas Zoom Controls */}
-      <div className="absolute bottom-4 right-4 z-20 flex flex-col space-y-1.5 bg-[#161822]/90 backdrop-blur-md p-1.5 rounded-xl border border-white/10 shadow-xl">
+        <div className="h-4 w-[1px] bg-[#e5e5e5] dark:border-[#333] mx-1" />
+
         <button
-          onClick={() => setZoom((z) => Math.min(2.0, z + 0.15))}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
+          onClick={() => setZoom((z) => Math.min(2, z * 1.2))}
+          className="btn-pill btn-pill-sm"
           title="Zoom In"
         >
-          <ZoomIn size={15} />
+          <ZoomIn size={12} />
         </button>
+
         <button
-          onClick={() => setZoom((z) => Math.max(0.4, z - 0.15))}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
+          onClick={() => setZoom((z) => Math.max(0.4, z * 0.8))}
+          className="btn-pill btn-pill-sm"
           title="Zoom Out"
         >
-          <ZoomOut size={15} />
+          <ZoomOut size={12} />
         </button>
+
         <button
           onClick={() => {
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}
-          className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
-          title="Reset View"
+          className="btn-pill btn-pill-sm"
+          title="Reset Canvas Pan & Zoom"
         >
-          <RotateCcw size={15} />
+          <RotateCcw size={12} />
         </button>
-        <div className="text-[10px] text-center font-mono text-slate-400 py-0.5 border-t border-white/5 select-none">
-          {Math.round(zoom * 100)}%
-        </div>
       </div>
 
-      {/* Infinite Transform Container */}
+      {/* Canvas Viewport */}
       <div
-        className="w-full h-full absolute inset-0 pointer-events-none"
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: '0 0',
         }}
+        className="w-full h-full absolute inset-0 pointer-events-none"
       >
-        {/* SVG Bezier Lines */}
-        <svg className="w-[8000px] h-[8000px] absolute inset-0 pointer-events-none">
-          {renderEdges()}
+        {/* SVG Connectors / Edges */}
+        <svg className="w-full h-full absolute inset-0 overflow-visible pointer-events-none">
+          {canvas.edges.map((edge) => {
+            const fromNode = canvas.nodes.find((n) => n.id === edge.fromId);
+            const toNode = canvas.nodes.find((n) => n.id === edge.toId);
+            if (!fromNode || !toNode) return null;
+
+            const x1 = fromNode.x + fromNode.width / 2;
+            const y1 = fromNode.y + fromNode.height / 2;
+            const x2 = toNode.x + toNode.width / 2;
+            const y2 = toNode.y + toNode.height / 2;
+
+            return (
+              <g key={edge.id}>
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke="#a3a3a3"
+                  strokeWidth="1.5"
+                  strokeDasharray={edge.style === 'dashed' ? '4 4' : undefined}
+                />
+                {edge.label && (
+                  <text
+                    x={(x1 + x2) / 2}
+                    y={(y1 + y2) / 2 - 6}
+                    fill="#737373"
+                    fontSize="10"
+                    textAnchor="middle"
+                    className="font-mono select-none"
+                  >
+                    {edge.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
         </svg>
 
-        {/* Canvas Cards */}
+        {/* Canvas Nodes */}
         {canvas.nodes.map((node) => {
           const isSelected = selectedNodeId === node.id;
+
           return (
             <div
               key={node.id}
               onMouseDown={(e) => handleNodeMouseDown(node, e)}
-              className="canvas-card absolute pointer-events-auto rounded-xl p-4 shadow-2xl transition-shadow select-none group border border-white/10 hover:border-white/20"
               style={{
-                left: `${node.x}px`,
-                top: `${node.y}px`,
+                transform: `translate(${node.x}px, ${node.y}px)`,
                 width: `${node.width}px`,
-                backgroundColor: '#161823',
-                borderLeft: `4px solid ${node.color || '#4F46E5'}`,
-                boxShadow: isSelected ? '0 0 0 2px #818CF8, 0 10px 25px -5px rgba(0,0,0,0.5)' : undefined,
+                minHeight: `${node.height}px`,
               }}
+              className={`canvas-card absolute pointer-events-auto rounded-2xl p-4 shadow-sm border transition-shadow cursor-move flex flex-col justify-between ${
+                node.type === 'sticky'
+                  ? 'bg-amber-100 dark:bg-amber-950/40 text-black dark:text-amber-100 border-amber-300 dark:border-amber-700'
+                  : 'bg-white dark:bg-[#1e1e1e] text-black dark:text-white border-[#e5e5e5] dark:border-[#333]'
+              } ${isSelected ? 'ring-2 ring-black dark:ring-white shadow-md' : ''}`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-bold text-xs text-white truncate max-w-[170px]">
-                  {node.title}
-                </span>
-                <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {node.pageId && (
-                    <button
-                      onClick={() => onNavigateToPage(node.pageId!)}
-                      className="p-1 hover:text-indigo-400 text-slate-400"
-                      title="Open full document"
-                    >
-                      <ExternalLink size={12} />
-                    </button>
-                  )}
+              <div>
+                <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#e5e5e5] dark:border-[#333]/50">
+                  <div className="flex items-center space-x-1.5 text-xs font-semibold truncate">
+                    {node.type === 'page' && <FileText size={12} className="text-[#737373]" />}
+                    {node.type === 'sticky' && <StickyNote size={12} className="text-amber-500" />}
+                    {node.type === 'card' && <Layout size={12} className="text-[#737373]" />}
+                    <input
+                      type="text"
+                      value={node.title}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => handleUpdateNodeContent(node.id, { title: e.target.value })}
+                      className="bg-transparent font-medium focus:outline-none w-full truncate"
+                    />
+                  </div>
+
                   <button
-                    onClick={(e) => handleDeleteNode(node.id, e)}
-                    className="p-1 hover:text-rose-400 text-slate-400"
-                    title="Delete card"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteNode(node.id);
+                    }}
+                    className="p-0.5 rounded text-[#a3a3a3] hover:text-red-500"
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={11} />
                   </button>
                 </div>
+
+                <textarea
+                  value={node.content || ''}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => handleUpdateNodeContent(node.id, { content: e.target.value })}
+                  placeholder="Notes or ideas..."
+                  className="w-full bg-transparent text-xs resize-none focus:outline-none leading-relaxed min-h-[48px] placeholder:text-[#a3a3a3]"
+                />
               </div>
 
-              <p className="text-xs text-slate-300 leading-relaxed line-clamp-3">
-                {node.content}
-              </p>
+              {node.type === 'page' && node.pageId && (
+                <div className="pt-2 border-t border-[#e5e5e5] dark:border-[#333]/50 mt-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNavigateToPage(node.pageId!);
+                    }}
+                    className="btn-pill btn-pill-sm text-[10px] w-full justify-center"
+                  >
+                    <ExternalLink size={10} />
+                    <span>Open Note</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -303,4 +301,3 @@ export const VisualCanvasView: React.FC<VisualCanvasViewProps> = ({
     </div>
   );
 };
-
